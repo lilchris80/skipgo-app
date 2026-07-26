@@ -74,27 +74,34 @@ tab_skips, tab_rentals, tab_new_rental, tab_clients = st.tabs(
 # ----------------------------------------------------------------
 with tab_skips:
     st.subheader("All Skips")
-    skips = supabase.table("skips").select("*").eq("company_id", company_id).execute().data
+    skips = supabase.table("skips").select("*, skip_types(size_label, gross_price)").eq("company_id", company_id).execute().data
+    skip_types = supabase.table("skip_types").select("*").eq("company_id", company_id).order("gross_price").execute().data
+
     if not skips:
         st.info("No skips added yet.")
     for skip in skips:
         status_emoji = "🟢" if skip["status"] == "available" else "🔴" if skip["status"] == "rented" else "🟡"
-        st.write(f"{status_emoji} **Skip {skip['skip_number']}** — {skip.get('size') or 'size not set'} — {skip['status']}")
+        size_label = skip["skip_types"]["size_label"] if skip.get("skip_types") else (skip.get("size") or "size not set")
+        st.write(f"{status_emoji} **Skip {skip['skip_number']}** — {size_label} — {skip['status']}")
 
     st.divider()
     st.subheader("Add a new skip")
-    with st.form("add_skip", clear_on_submit=True):
-        new_number = st.text_input("Skip number")
-        new_size = st.text_input("Size (e.g. 6 yard)")
-        if st.form_submit_button("Add Skip"):
-            supabase.table("skips").insert({
-                "company_id": company_id,
-                "skip_number": new_number,
-                "size": new_size,
-                "status": "available"
-            }).execute()
-            st.success("Skip added.")
-            st.rerun()
+    if not skip_types:
+        st.warning("No skip sizes/prices set up yet for this company.")
+    else:
+        size_options = {f"{t['size_label']} (€{t['gross_price']:.2f})": t["id"] for t in skip_types}
+        with st.form("add_skip", clear_on_submit=True):
+            new_number = st.text_input("Skip number")
+            chosen_size = st.selectbox("Size", options=list(size_options.keys()))
+            if st.form_submit_button("Add Skip"):
+                supabase.table("skips").insert({
+                    "company_id": company_id,
+                    "skip_number": new_number,
+                    "skip_type_id": size_options[chosen_size],
+                    "status": "available"
+                }).execute()
+                st.success("Skip added.")
+                st.rerun()
 
 # ----------------------------------------------------------------
 # TAB: ACTIVE RENTALS
@@ -133,7 +140,7 @@ with tab_new_rental:
     st.subheader("Create a New Rental")
 
     clients = supabase.table("clients").select("*").eq("company_id", company_id).execute().data
-    available_skips = supabase.table("skips").select("*").eq("company_id", company_id).eq("status", "available").execute().data
+    available_skips = supabase.table("skips").select("*, skip_types(size_label, gross_price, weekly_late_rate)").eq("company_id", company_id).eq("status", "available").execute().data
 
     if not clients:
         st.warning("Add a client first (see the Clients tab).")
@@ -141,29 +148,37 @@ with tab_new_rental:
         st.warning("No available skips — add one in the Skips tab.")
     else:
         client_options = {c["name"]: c["id"] for c in clients}
-        skip_options = {s["skip_number"]: s["id"] for s in available_skips}
+        skip_options = {s["skip_number"]: s for s in available_skips}
+
+        # Pick the skip OUTSIDE the form, so the price/rate fields below
+        # can immediately update to match whichever skip is chosen.
+        chosen_skip_number = st.selectbox("Skip", options=list(skip_options.keys()))
+        chosen_skip = skip_options[chosen_skip_number]
+        skip_type = chosen_skip.get("skip_types") or {}
+        default_price = float(skip_type.get("gross_price", 0))
+        default_weekly_rate = float(skip_type.get("weekly_late_rate", company["settings"].get("weekly_late_rate", 0)))
 
         with st.form("new_rental"):
             chosen_client = st.selectbox("Client", options=list(client_options.keys()))
-            chosen_skip = st.selectbox("Skip", options=list(skip_options.keys()))
-            base_price = st.number_input("Base price (€)", min_value=0.0, step=5.0)
+            base_price = st.number_input("Base price (€) — auto-filled, editable for one-off discounts", min_value=0.0, value=default_price, step=5.0)
             weekly_rate = st.number_input(
                 "Weekly late rate (€)",
                 min_value=0.0,
-                value=float(company["settings"].get("weekly_late_rate", 0)),
+                value=default_weekly_rate,
                 step=5.0
             )
             if st.form_submit_button("Create Rental", type="primary"):
+                selected_skip_id = skip_options[chosen_skip_number]["id"]
                 supabase.table("rentals").insert({
                     "company_id": company_id,
                     "client_id": client_options[chosen_client],
-                    "skip_id": skip_options[chosen_skip],
+                    "skip_id": selected_skip_id,
                     "start_date": str(date.today()),
                     "base_price": base_price,
                     "weekly_late_rate": weekly_rate,
                     "payment_status": "Pending"
                 }).execute()
-                supabase.table("skips").update({"status": "rented"}).eq("id", skip_options[chosen_skip]).execute()
+                supabase.table("skips").update({"status": "rented"}).eq("id", selected_skip_id).execute()
                 st.success("Rental created.")
                 st.rerun()
 
