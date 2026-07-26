@@ -1,6 +1,33 @@
 import streamlit as st
 from supabase import create_client
 from datetime import date
+import math
+
+def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_rate, free_days):
+    """
+    Works out the total owed for a rental: the base price, plus a late fee
+    if it's been kept longer than the free period (e.g. 30 days).
+    Counts from the start date to either the return date (if returned)
+    or today (if still out).
+    """
+    start = date.fromisoformat(start_date_str)
+    end = date.fromisoformat(end_date_str) if end_date_str else date.today()
+    days_out = (end - start).days
+
+    if days_out <= free_days:
+        late_fee = 0.0
+        weeks_late = 0
+    else:
+        extra_days = days_out - free_days
+        weeks_late = math.ceil(extra_days / 7)
+        late_fee = weeks_late * weekly_late_rate
+
+    return {
+        "days_out": days_out,
+        "weeks_late": weeks_late,
+        "late_fee": late_fee,
+        "total_due": base_price + late_fee
+    }
 
 # ----------------------------------------------------------------
 # CONNECTION SETUP
@@ -65,8 +92,8 @@ st.title(f"🗑️ {company['name']}")
 if st.button("Log out"):
     logout()
 
-tab_skips, tab_rentals, tab_new_rental, tab_clients = st.tabs(
-    ["Skips", "Active Rentals", "New Rental", "Clients"]
+tab_skips, tab_rentals, tab_new_rental, tab_clients, tab_invoices, tab_quotes, tab_history = st.tabs(
+    ["Skips", "Active Rentals", "New Rental", "Clients", "Invoices", "Quotes", "Client History"]
 )
 
 # ----------------------------------------------------------------
@@ -114,10 +141,16 @@ with tab_rentals:
 
     if not rentals:
         st.info("No active rentals.")
+    free_days = int(company["settings"].get("free_days", 30))
     for r in rentals:
         client_name = r["clients"]["name"] if r["clients"] else "Unknown client"
         skip_number = r["skips"]["skip_number"] if r["skips"] else "?"
+        amounts = calculate_amount_due(r["start_date"], None, float(r["base_price"]), float(r["weekly_late_rate"]), free_days)
         st.markdown(f"**Skip {skip_number}** — {client_name} — started {r['start_date']}")
+        st.caption(f"{amounts['days_out']} days out. " + (
+            f"⚠️ {amounts['weeks_late']} week(s) late — €{amounts['late_fee']:.2f} late fee added"
+            if amounts["weeks_late"] > 0 else "Within free period."
+        ) + f" **Total due: €{amounts['total_due']:.2f}**")
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Mark Returned", key=f"return_{r['id']}"):
@@ -209,3 +242,204 @@ with tab_clients:
                 }).execute()
                 st.success("Client added.")
                 st.rerun()
+
+# ----------------------------------------------------------------
+# TAB: INVOICES
+# ----------------------------------------------------------------
+with tab_invoices:
+    st.subheader("Generate an Invoice")
+
+    free_days = int(company["settings"].get("free_days", 30))
+
+    # Rentals that don't have an invoice yet
+    all_rentals = supabase.table("rentals").select(
+        "*, clients(name), skips(skip_number)"
+    ).eq("company_id", company_id).execute().data
+    invoiced_rental_ids = {
+        inv["rental_id"] for inv in
+        supabase.table("invoices").select("rental_id").eq("company_id", company_id).execute().data
+        if inv["rental_id"]
+    }
+    uninvoiced = [r for r in all_rentals if r["id"] not in invoiced_rental_ids]
+
+    if not uninvoiced:
+        st.info("No rentals waiting to be invoiced.")
+    else:
+        rental_labels = {
+            f"Skip {r['skips']['skip_number']} — {r['clients']['name']} — started {r['start_date']}": r
+            for r in uninvoiced
+        }
+        chosen_label = st.selectbox("Choose a rental to invoice", options=list(rental_labels.keys()))
+        rental = rental_labels[chosen_label]
+
+        amounts = calculate_amount_due(
+            rental["start_date"], rental["end_date"],
+            float(rental["base_price"]), float(rental["weekly_late_rate"]), free_days
+        )
+        st.write(f"Base price: €{rental['base_price']:.2f}")
+        if amounts["weeks_late"] > 0:
+            st.write(f"Late fee ({amounts['weeks_late']} week(s)): €{amounts['late_fee']:.2f}")
+
+        final_amount = st.number_input(
+            "Final invoice amount (€) — edit here for any discount before issuing",
+            min_value=0.0, value=amounts["total_due"], step=5.0
+        )
+
+        if st.button("Generate Invoice", type="primary"):
+            vat_rate = 19.00
+            net_amount = final_amount / (1 + vat_rate / 100)
+            vat_amount = final_amount - net_amount
+
+            invoice_number = supabase.rpc("get_next_invoice_number", {"p_company_id": company_id}).execute().data
+
+            new_invoice = supabase.table("invoices").insert({
+                "company_id": company_id,
+                "invoice_number": invoice_number,
+                "client_id": rental["client_id"],
+                "rental_id": rental["id"],
+                "issue_date": str(date.today()),
+                "subtotal": round(net_amount, 2),
+                "vat_rate": vat_rate,
+                "vat_amount": round(vat_amount, 2),
+                "total_amount": round(final_amount, 2),
+                "status": "Pending"
+            }).execute().data[0]
+
+            supabase.table("invoice_line_items").insert({
+                "invoice_id": new_invoice["id"],
+                "description": f"Skip rental — {rental['skips']['skip_number']}",
+                "quantity": 1,
+                "unit_price": round(final_amount, 2),
+                "line_total": round(final_amount, 2)
+            }).execute()
+
+            st.success(f"Invoice #{invoice_number} created.")
+            st.rerun()
+
+    st.divider()
+    st.subheader("All Invoices")
+    invoices = supabase.table("invoices").select("*, clients(name)").eq("company_id", company_id).order("invoice_number", desc=True).execute().data
+    for inv in invoices:
+        client_name = inv["clients"]["name"] if inv["clients"] else "Unknown"
+        with st.expander(f"Invoice #{inv['invoice_number']} — {client_name} — €{inv['total_amount']:.2f} — {inv['status']}"):
+            st.markdown(f"""
+**{company['name']}**
+{company.get('address', '')}
+VAT No: {company.get('vat_number') or 'Not set'}
+
+**Invoice #{inv['invoice_number']}**
+Date: {inv['issue_date']}
+Bill to: {client_name}
+
+---
+Net amount: €{inv['subtotal']:.2f}
+VAT ({inv['vat_rate']}%): €{inv['vat_amount']:.2f}
+**Total: €{inv['total_amount']:.2f}**
+---
+
+*Use your browser's Print / Save as PDF option to save or print this invoice.*
+            """)
+            if inv["status"] != "Paid":
+                if st.button("Mark Paid", key=f"inv_paid_{inv['id']}"):
+                    supabase.table("invoices").update({"status": "Paid"}).eq("id", inv["id"]).execute()
+                    st.rerun()
+
+# ----------------------------------------------------------------
+# TAB: QUOTES
+# ----------------------------------------------------------------
+with tab_quotes:
+    st.subheader("Create a Quote")
+
+    clients = supabase.table("clients").select("*").eq("company_id", company_id).execute().data
+    skip_types = supabase.table("skip_types").select("*").eq("company_id", company_id).order("gross_price").execute().data
+
+    if not clients or not skip_types:
+        st.warning("Add at least one client and one skip size first.")
+    else:
+        client_options = {c["name"]: c["id"] for c in clients}
+        type_options = {f"{t['size_label']} (€{t['gross_price']:.2f})": t for t in skip_types}
+
+        chosen_client = st.selectbox("Client", options=list(client_options.keys()), key="quote_client")
+        chosen_type_label = st.selectbox("Skip size", options=list(type_options.keys()), key="quote_type")
+        chosen_type = type_options[chosen_type_label]
+
+        quoted_price = st.number_input(
+            "Quoted price (€) — edit for a special rate",
+            min_value=0.0, value=float(chosen_type["gross_price"]), step=5.0
+        )
+
+        if st.button("Create Quote", type="primary"):
+            quote_number = supabase.rpc("get_next_quote_number", {"p_company_id": company_id}).execute().data
+            supabase.table("quotes").insert({
+                "company_id": company_id,
+                "quote_number": quote_number,
+                "client_id": client_options[chosen_client],
+                "skip_type_id": chosen_type["id"],
+                "quoted_price": quoted_price,
+                "status": "Pending"
+            }).execute()
+            st.success(f"Quote #{quote_number} created.")
+            st.rerun()
+
+    st.divider()
+    st.subheader("All Quotes")
+    quotes = supabase.table("quotes").select("*, clients(name), skip_types(size_label)").eq("company_id", company_id).order("quote_number", desc=True).execute().data
+    for q in quotes:
+        client_name = q["clients"]["name"] if q["clients"] else "Unknown"
+        size_label = q["skip_types"]["size_label"] if q["skip_types"] else "?"
+        with st.expander(f"Quote #{q['quote_number']} — {client_name} — {size_label} — €{q['quoted_price']:.2f} — {q['status']}"):
+            st.markdown(f"""
+**{company['name']}**
+
+**Quote #{q['quote_number']}**
+Date: {q['issue_date']}
+For: {client_name}
+Skip size: {size_label}
+
+**Quoted price: €{q['quoted_price']:.2f}** (VAT included)
+
+*Use your browser's Print / Save as PDF option to save or print this quote.*
+            """)
+            if q["status"] == "Pending":
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Mark Accepted", key=f"quote_accept_{q['id']}"):
+                        supabase.table("quotes").update({"status": "Accepted"}).eq("id", q["id"]).execute()
+                        st.rerun()
+                with col2:
+                    if st.button("Mark Expired", key=f"quote_expire_{q['id']}"):
+                        supabase.table("quotes").update({"status": "Expired"}).eq("id", q["id"]).execute()
+                        st.rerun()
+
+# ----------------------------------------------------------------
+# TAB: CLIENT HISTORY
+# ----------------------------------------------------------------
+with tab_history:
+    st.subheader("Client History & Statement")
+
+    clients = supabase.table("clients").select("*").eq("company_id", company_id).execute().data
+    if not clients:
+        st.info("No clients yet.")
+    else:
+        client_options = {c["name"]: c["id"] for c in clients}
+        chosen_name = st.selectbox("Select a client", options=list(client_options.keys()))
+        client_id = client_options[chosen_name]
+
+        st.markdown("### Rentals")
+        rentals = supabase.table("rentals").select("*, skips(skip_number)").eq("company_id", company_id).eq("client_id", client_id).order("start_date", desc=True).execute().data
+        for r in rentals:
+            skip_number = r["skips"]["skip_number"] if r["skips"] else "?"
+            status = "Returned" if r["end_date"] else "Active"
+            st.write(f"Skip {skip_number} — {r['start_date']} to {r['end_date'] or 'present'} — {status} — {r['payment_status']}")
+
+        st.markdown("### Invoices & Balance")
+        invoices = supabase.table("invoices").select("*").eq("company_id", company_id).eq("client_id", client_id).order("issue_date", desc=True).execute().data
+        total_owed = 0.0
+        for inv in invoices:
+            st.write(f"Invoice #{inv['invoice_number']} — {inv['issue_date']} — €{inv['total_amount']:.2f} — {inv['status']}")
+            if inv["status"] != "Paid":
+                total_owed += float(inv["total_amount"])
+
+        st.divider()
+        st.markdown(f"### Outstanding balance: €{total_owed:.2f}")
+
