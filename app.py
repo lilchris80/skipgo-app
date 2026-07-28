@@ -31,8 +31,6 @@ def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_r
 
 # ----------------------------------------------------------------
 # CONNECTION SETUP
-# These values come from Streamlit's "secrets" — never hard-coded
-# directly in this file, so they're safe even if this code is shared.
 # ----------------------------------------------------------------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -171,6 +169,18 @@ with tab_rentals:
 with tab_new_rental:
     st.subheader("Create a New Rental")
 
+    if "last_rental_created" in st.session_state:
+        info = st.session_state.last_rental_created
+        st.success(
+            f"✅ Rental created — Skip {info['skip']} for {info['client']}\n\n"
+            f"Delivery: {info['delivery']} • Estimated pickup: {info['pickup']}\n\n"
+            f"Base price: €{info['base_price']:.2f}"
+        )
+        if st.button("Dismiss"):
+            del st.session_state.last_rental_created
+            st.rerun()
+        st.divider()
+
     clients = supabase.table("clients").select("*").eq("company_id", company_id).execute().data
     available_skips = supabase.table("skips").select("*, skip_types(size_label, gross_price, weekly_late_rate)").eq("company_id", company_id).eq("status", "available").execute().data
 
@@ -181,39 +191,59 @@ with tab_new_rental:
     else:
         client_options = {c["name"]: c["id"] for c in clients}
         skip_options = {s["skip_number"]: s for s in available_skips}
+        free_days = int(company["settings"].get("free_days", 30))
 
+        chosen_client = st.selectbox("Client", options=list(client_options.keys()))
         chosen_skip_number = st.selectbox("Skip", options=list(skip_options.keys()))
         chosen_skip = skip_options[chosen_skip_number]
         skip_type = chosen_skip.get("skip_types") or {}
         default_price = float(skip_type.get("gross_price", 0))
         default_weekly_rate = float(skip_type.get("weekly_late_rate", company["settings"].get("weekly_late_rate", 0)))
 
-        with st.form("new_rental"):
-            chosen_client = st.selectbox("Client", options=list(client_options.keys()))
-            delivery_date = st.date_input("Delivery date", value=date.today())
-            estimated_pickup = st.date_input("Estimated pickup date", value=None)
-            base_price = st.number_input("Base price (€) — auto-filled, editable for one-off discounts", min_value=0.0, value=default_price, step=5.0)
-            weekly_rate = st.number_input(
-                "Weekly late rate (€)",
-                min_value=0.0,
-                value=default_weekly_rate,
-                step=5.0
+        delivery_date = st.date_input("Delivery date", value=date.today())
+        estimated_pickup = st.date_input("Estimated pickup date (optional — for planning only)", value=None)
+
+        base_price = st.number_input("Base price (€)", min_value=0.0, value=default_price, step=5.0)
+        weekly_rate = st.number_input("Weekly late rate (€)", min_value=0.0, value=default_weekly_rate, step=5.0)
+
+        if estimated_pickup:
+            preview = calculate_amount_due(
+                str(delivery_date), str(estimated_pickup), base_price, weekly_rate, free_days
             )
-            if st.form_submit_button("Create Rental", type="primary"):
-                selected_skip_id = skip_options[chosen_skip_number]["id"]
-                supabase.table("rentals").insert({
-                    "company_id": company_id,
-                    "client_id": client_options[chosen_client],
-                    "skip_id": selected_skip_id,
-                    "start_date": str(delivery_date),
-                    "estimated_pickup_date": str(estimated_pickup) if estimated_pickup else None,
-                    "base_price": base_price,
-                    "weekly_late_rate": weekly_rate,
-                    "payment_status": "Pending"
-                }).execute()
-                supabase.table("skips").update({"status": "rented"}).eq("id", selected_skip_id).execute()
-                st.success("Rental created.")
-                st.rerun()
+            st.info(
+                f"📋 **Preview based on estimated pickup ({estimated_pickup}):**\n\n"
+                f"{preview['days_out']} days total. " +
+                (f"⚠️ {preview['weeks_late']} week(s) over the {free_days}-day free period — "
+                 f"€{preview['late_fee']:.2f} late fee would apply.\n\n"
+                 f"**Projected total: €{preview['total_due']:.2f}**"
+                 if preview["weeks_late"] > 0 else
+                 f"Within the {free_days}-day free period — no late fee.\n\n"
+                 f"**Projected total: €{preview['total_due']:.2f}**")
+            )
+            st.caption("This is only a projection. The real invoice is always calculated from actual days, once the skip is returned or invoiced.")
+
+        if st.button("Create Rental", type="primary"):
+            selected_skip_id = skip_options[chosen_skip_number]["id"]
+            supabase.table("rentals").insert({
+                "company_id": company_id,
+                "client_id": client_options[chosen_client],
+                "skip_id": selected_skip_id,
+                "start_date": str(delivery_date),
+                "estimated_pickup_date": str(estimated_pickup) if estimated_pickup else None,
+                "base_price": base_price,
+                "weekly_late_rate": weekly_rate,
+                "payment_status": "Pending",
+                "created_at": "now()"
+            }).execute()
+            supabase.table("skips").update({"status": "rented"}).eq("id", selected_skip_id).execute()
+            st.session_state.last_rental_created = {
+                "skip": chosen_skip_number,
+                "client": chosen_client,
+                "delivery": str(delivery_date),
+                "pickup": str(estimated_pickup) if estimated_pickup else "Not set",
+                "base_price": base_price
+            }
+            st.rerun()
 
 # ----------------------------------------------------------------
 # TAB: CLIENTS
@@ -275,9 +305,14 @@ with tab_invoices:
             rental["start_date"], rental["end_date"],
             float(rental["base_price"]), float(rental["weekly_late_rate"]), free_days
         )
+        st.write(f"Delivery date: {rental['start_date']}")
+        st.write(f"Days out so far: {amounts['days_out']}")
         st.write(f"Base price: €{rental['base_price']:.2f}")
         if amounts["weeks_late"] > 0:
-            st.write(f"Late fee ({amounts['weeks_late']} week(s)): €{amounts['late_fee']:.2f}")
+            st.write(f"⚠️ Late fee ({amounts['weeks_late']} week(s) over {free_days}-day free period): €{amounts['late_fee']:.2f}")
+        else:
+            st.write(f"Within {free_days}-day free period — no late fee yet.")
+        st.write(f"**Calculated total: €{amounts['total_due']:.2f}**")
 
         final_amount = st.number_input(
             "Final invoice amount (€) — edit here for any discount before issuing",
