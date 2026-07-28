@@ -57,7 +57,6 @@ def login(email, password):
         result = supabase.auth.sign_in_with_password({"email": email, "password": password})
         st.session_state.user = result.user
 
-        # Look up which company this user belongs to
         profile = supabase.table("app_users").select("*").eq("id", result.user.id).single().execute()
         company_id = profile.data["company_id"]
 
@@ -183,8 +182,6 @@ with tab_new_rental:
         client_options = {c["name"]: c["id"] for c in clients}
         skip_options = {s["skip_number"]: s for s in available_skips}
 
-        # Pick the skip OUTSIDE the form, so the price/rate fields below
-        # can immediately update to match whichever skip is chosen.
         chosen_skip_number = st.selectbox("Skip", options=list(skip_options.keys()))
         chosen_skip = skip_options[chosen_skip_number]
         skip_type = chosen_skip.get("skip_types") or {}
@@ -193,6 +190,8 @@ with tab_new_rental:
 
         with st.form("new_rental"):
             chosen_client = st.selectbox("Client", options=list(client_options.keys()))
+            delivery_date = st.date_input("Delivery date", value=date.today())
+            estimated_pickup = st.date_input("Estimated pickup date", value=None)
             base_price = st.number_input("Base price (€) — auto-filled, editable for one-off discounts", min_value=0.0, value=default_price, step=5.0)
             weekly_rate = st.number_input(
                 "Weekly late rate (€)",
@@ -206,7 +205,8 @@ with tab_new_rental:
                     "company_id": company_id,
                     "client_id": client_options[chosen_client],
                     "skip_id": selected_skip_id,
-                    "start_date": str(date.today()),
+                    "start_date": str(delivery_date),
+                    "estimated_pickup_date": str(estimated_pickup) if estimated_pickup else None,
                     "base_price": base_price,
                     "weekly_late_rate": weekly_rate,
                     "payment_status": "Pending"
@@ -251,7 +251,6 @@ with tab_invoices:
 
     free_days = int(company["settings"].get("free_days", 30))
 
-    # Rentals that don't have an invoice yet
     all_rentals = supabase.table("rentals").select(
         "*, clients(name), skips(skip_number)"
     ).eq("company_id", company_id).execute().data
@@ -442,4 +441,3 @@ with tab_history:
 
         st.divider()
         st.markdown(f"### Outstanding balance: €{total_owed:.2f}")
-
