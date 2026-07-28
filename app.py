@@ -136,6 +136,8 @@ with tab_rentals:
         "*, clients(name, phone), skips(skip_number)"
     ).eq("company_id", company_id).is_("end_date", "null").execute().data
 
+    available_skips_for_swap = supabase.table("skips").select("*").eq("company_id", company_id).eq("status", "available").execute().data
+
     if not rentals:
         st.info("No active rentals.")
     free_days = int(company["settings"].get("free_days", 30))
@@ -148,7 +150,8 @@ with tab_rentals:
             f"⚠️ {amounts['weeks_late']} week(s) late — €{amounts['late_fee']:.2f} late fee added"
             if amounts["weeks_late"] > 0 else "Within free period."
         ) + f" **Total due: €{amounts['total_due']:.2f}**")
-        col1, col2 = st.columns(2)
+
+        col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("Mark Returned", key=f"return_{r['id']}"):
                 supabase.table("rentals").update({"end_date": str(date.today())}).eq("id", r["id"]).execute()
@@ -161,6 +164,39 @@ with tab_rentals:
                     st.rerun()
             else:
                 st.write("✅ Paid")
+        with col3:
+            if st.button("🔄 Swap Skip", key=f"swap_toggle_{r['id']}"):
+                st.session_state[f"swapping_{r['id']}"] = not st.session_state.get(f"swapping_{r['id']}", False)
+
+        if st.session_state.get(f"swapping_{r['id']}", False):
+            st.caption("Closes this rental today and opens a new one with a different skip, for the same client.")
+            if not available_skips_for_swap:
+                st.warning("No other available skips to swap to.")
+            else:
+                swap_options = {s["skip_number"]: s["id"] for s in available_skips_for_swap}
+                chosen_swap = st.selectbox("New skip", options=list(swap_options.keys()), key=f"swap_select_{r['id']}")
+                if st.button("Confirm Swap", key=f"swap_confirm_{r['id']}", type="primary"):
+                    old_skip_id = r["skip_id"]
+                    new_skip_id = swap_options[chosen_swap]
+
+                    supabase.table("rentals").update({"end_date": str(date.today())}).eq("id", r["id"]).execute()
+                    supabase.table("skips").update({"status": "available"}).eq("id", old_skip_id).execute()
+
+                    supabase.table("rentals").insert({
+                        "company_id": company_id,
+                        "client_id": r["client_id"],
+                        "skip_id": new_skip_id,
+                        "start_date": str(date.today()),
+                        "base_price": r["base_price"],
+                        "weekly_late_rate": r["weekly_late_rate"],
+                        "payment_status": "Pending",
+                        "created_at": "now()"
+                    }).execute()
+                    supabase.table("skips").update({"status": "rented"}).eq("id", new_skip_id).execute()
+
+                    st.session_state[f"swapping_{r['id']}"] = False
+                    st.success(f"Swapped to Skip {chosen_swap} for {client_name}.")
+                    st.rerun()
         st.divider()
 
 # ----------------------------------------------------------------
@@ -193,18 +229,20 @@ with tab_new_rental:
         skip_options = {s["skip_number"]: s for s in available_skips}
         free_days = int(company["settings"].get("free_days", 30))
 
-        chosen_client = st.selectbox("Client", options=list(client_options.keys()))
-        chosen_skip_number = st.selectbox("Skip", options=list(skip_options.keys()))
+        form_key = st.session_state.get("rental_form_key", 0)
+
+        chosen_client = st.selectbox("Client", options=list(client_options.keys()), key=f"client_{form_key}")
+        chosen_skip_number = st.selectbox("Skip", options=list(skip_options.keys()), key=f"skip_{form_key}")
         chosen_skip = skip_options[chosen_skip_number]
         skip_type = chosen_skip.get("skip_types") or {}
         default_price = float(skip_type.get("gross_price", 0))
         default_weekly_rate = float(skip_type.get("weekly_late_rate", company["settings"].get("weekly_late_rate", 0)))
 
-        delivery_date = st.date_input("Delivery date", value=date.today())
-        estimated_pickup = st.date_input("Estimated pickup date (optional — for planning only)", value=None)
+        delivery_date = st.date_input("Delivery date", value=date.today(), key=f"delivery_{form_key}")
+        estimated_pickup = st.date_input("Estimated pickup date (optional — for planning only)", value=None, key=f"pickup_{form_key}")
 
-        base_price = st.number_input("Base price (€)", min_value=0.0, value=default_price, step=5.0)
-        weekly_rate = st.number_input("Weekly late rate (€)", min_value=0.0, value=default_weekly_rate, step=5.0)
+        base_price = st.number_input("Base price (€)", min_value=0.0, value=default_price, step=5.0, key=f"price_{form_key}")
+        weekly_rate = st.number_input("Weekly late rate (€)", min_value=0.0, value=default_weekly_rate, step=5.0, key=f"rate_{form_key}")
 
         if estimated_pickup:
             preview = calculate_amount_due(
@@ -243,6 +281,7 @@ with tab_new_rental:
                 "pickup": str(estimated_pickup) if estimated_pickup else "Not set",
                 "base_price": base_price
             }
+            st.session_state.rental_form_key = form_key + 1
             st.rerun()
 
 # ----------------------------------------------------------------
