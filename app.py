@@ -4,10 +4,11 @@ from datetime import date
 import math
 from pdf_generator import generate_invoice_pdf, generate_quote_pdf
 
-def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_rate, free_days):
+def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_rate, free_days, grace_days=0):
     """
     Works out the total owed for a rental: the base price, plus a late fee
-    if it's been kept longer than the free period (e.g. 30 days).
+    if it's been kept longer than the free period (e.g. 30 days) plus a
+    grace window (e.g. 3 extra days that are still free before charging starts).
     Counts from the start date to either the return date (if returned)
     or today (if still out).
     """
@@ -15,11 +16,11 @@ def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_r
     end = date.fromisoformat(end_date_str) if end_date_str else date.today()
     days_out = (end - start).days
 
-    if days_out <= free_days:
+    if days_out <= free_days + grace_days:
         late_fee = 0.0
         weeks_late = 0
     else:
-        extra_days = days_out - free_days
+        extra_days = days_out - (free_days + grace_days)
         weeks_late = math.ceil(extra_days / 7)
         late_fee = weeks_late * weekly_late_rate
 
@@ -142,10 +143,11 @@ with tab_rentals:
     if not rentals:
         st.info("No active rentals.")
     free_days = int(company["settings"].get("free_days", 30))
+    grace_days = int(company["settings"].get("grace_days", 3))
     for r in rentals:
         client_name = r["clients"]["name"] if r["clients"] else "Unknown client"
         skip_number = r["skips"]["skip_number"] if r["skips"] else "?"
-        amounts = calculate_amount_due(r["start_date"], None, float(r["base_price"]), float(r["weekly_late_rate"]), free_days)
+        amounts = calculate_amount_due(r["start_date"], None, float(r["base_price"]), float(r["weekly_late_rate"]), free_days, grace_days)
         st.markdown(f"**Skip {skip_number}** — {client_name} — started {r['start_date']}")
         st.caption(f"{amounts['days_out']} days out. " + (
             f"⚠️ {amounts['weeks_late']} week(s) late — €{amounts['late_fee']:.2f} late fee added"
@@ -229,6 +231,7 @@ with tab_new_rental:
         client_options = {c["name"]: c["id"] for c in clients}
         skip_options = {s["skip_number"]: s for s in available_skips}
         free_days = int(company["settings"].get("free_days", 30))
+        grace_days = int(company["settings"].get("grace_days", 3))
 
         form_key = st.session_state.get("rental_form_key", 0)
 
@@ -247,7 +250,7 @@ with tab_new_rental:
 
         if estimated_pickup:
             preview = calculate_amount_due(
-                str(delivery_date), str(estimated_pickup), base_price, weekly_rate, free_days
+                str(delivery_date), str(estimated_pickup), base_price, weekly_rate, free_days, grace_days
             )
             st.info(
                 f"📋 **Preview based on estimated pickup ({estimated_pickup}):**\n\n"
@@ -320,6 +323,7 @@ with tab_invoices:
     st.subheader("Generate an Invoice")
 
     free_days = int(company["settings"].get("free_days", 30))
+    grace_days = int(company["settings"].get("grace_days", 3))
 
     all_rentals = supabase.table("rentals").select(
         "*, clients(name), skips(skip_number)"
@@ -343,7 +347,7 @@ with tab_invoices:
 
         amounts = calculate_amount_due(
             rental["start_date"], rental["end_date"],
-            float(rental["base_price"]), float(rental["weekly_late_rate"]), free_days
+            float(rental["base_price"]), float(rental["weekly_late_rate"]), free_days, grace_days
         )
         st.write(f"Delivery date: {rental['start_date']}")
         st.write(f"Days out so far: {amounts['days_out']}")
