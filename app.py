@@ -2,6 +2,7 @@ import streamlit as st
 from supabase import create_client
 from datetime import date
 import math
+from pdf_generator import generate_invoice_pdf, generate_quote_pdf
 
 def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_rate, free_days):
     """
@@ -391,10 +392,12 @@ with tab_invoices:
 
     st.divider()
     st.subheader("All Invoices")
-    invoices = supabase.table("invoices").select("*, clients(name)").eq("company_id", company_id).order("invoice_number", desc=True).execute().data
+    invoices = supabase.table("invoices").select(
+        "*, clients(name, address, phone)"
+    ).eq("company_id", company_id).order("invoice_number", desc=True).execute().data
     for inv in invoices:
-        client_name = inv["clients"]["name"] if inv["clients"] else "Unknown"
-        with st.expander(f"Invoice #{inv['invoice_number']} — {client_name} — €{inv['total_amount']:.2f} — {inv['status']}"):
+        client = inv["clients"] or {"name": "Unknown client"}
+        with st.expander(f"Invoice #{inv['invoice_number']} — {client['name']} — €{inv['total_amount']:.2f} — {inv['status']}"):
             st.markdown(f"""
 **{company['name']}**
 {company.get('address', '')}
@@ -402,16 +405,25 @@ VAT No: {company.get('vat_number') or 'Not set'}
 
 **Invoice #{inv['invoice_number']}**
 Date: {inv['issue_date']}
-Bill to: {client_name}
+Bill to: {client['name']}
 
 ---
 Net amount: €{inv['subtotal']:.2f}
 VAT ({inv['vat_rate']}%): €{inv['vat_amount']:.2f}
 **Total: €{inv['total_amount']:.2f}**
 ---
-
-*Use your browser's Print / Save as PDF option to save or print this invoice.*
             """)
+
+            line_items = supabase.table("invoice_line_items").select("*").eq("invoice_id", inv["id"]).execute().data
+            pdf_bytes = generate_invoice_pdf(company, inv, client, line_items)
+            st.download_button(
+                label="📄 Download PDF",
+                data=pdf_bytes,
+                file_name=f"Invoice_{inv['invoice_number']}.pdf",
+                mime="application/pdf",
+                key=f"pdf_inv_{inv['id']}"
+            )
+
             if inv["status"] != "Paid":
                 if st.button("Mark Paid", key=f"inv_paid_{inv['id']}"):
                     supabase.table("invoices").update({"status": "Paid"}).eq("id", inv["id"]).execute()
@@ -456,23 +468,33 @@ with tab_quotes:
 
     st.divider()
     st.subheader("All Quotes")
-    quotes = supabase.table("quotes").select("*, clients(name), skip_types(size_label)").eq("company_id", company_id).order("quote_number", desc=True).execute().data
+    quotes = supabase.table("quotes").select(
+        "*, clients(name, address, phone), skip_types(size_label)"
+    ).eq("company_id", company_id).order("quote_number", desc=True).execute().data
     for q in quotes:
-        client_name = q["clients"]["name"] if q["clients"] else "Unknown"
+        client = q["clients"] or {"name": "Unknown client"}
         size_label = q["skip_types"]["size_label"] if q["skip_types"] else "?"
-        with st.expander(f"Quote #{q['quote_number']} — {client_name} — {size_label} — €{q['quoted_price']:.2f} — {q['status']}"):
+        with st.expander(f"Quote #{q['quote_number']} — {client['name']} — {size_label} — €{q['quoted_price']:.2f} — {q['status']}"):
             st.markdown(f"""
 **{company['name']}**
 
 **Quote #{q['quote_number']}**
 Date: {q['issue_date']}
-For: {client_name}
+For: {client['name']}
 Skip size: {size_label}
 
 **Quoted price: €{q['quoted_price']:.2f}** (VAT included)
-
-*Use your browser's Print / Save as PDF option to save or print this quote.*
             """)
+
+            pdf_bytes = generate_quote_pdf(company, q, client, size_label)
+            st.download_button(
+                label="📄 Download PDF",
+                data=pdf_bytes,
+                file_name=f"Quote_{q['quote_number']}.pdf",
+                mime="application/pdf",
+                key=f"pdf_quote_{q['id']}"
+            )
+
             if q["status"] == "Pending":
                 col1, col2 = st.columns(2)
                 with col1:
