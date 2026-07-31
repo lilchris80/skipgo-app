@@ -7,10 +7,10 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle
 
-# The logo file must sit in the same folder as this script, named logo.png.
+# The logo file must sit in the same folder as this script, named logo.jpg.
 # Using os.path.dirname(__file__) means it loads correctly no matter what
 # folder Streamlit happens to be running from.
-LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.jpg")
 
 # ----------------------------------------------------------------
 # BRAND SETTINGS
