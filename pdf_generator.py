@@ -39,6 +39,7 @@ def _draw_header(c, company, doc_title, doc_number, page_width, page_height):
     phone = settings.get("phone", DEFAULT_PHONE)
     email = settings.get("email", DEFAULT_EMAIL)
     service_area = settings.get("service_area", DEFAULT_SERVICE_AREA)
+    legal_name = settings.get("legal_name")
 
     # Logo, top-left. Aspect ratio matches the resized source image (500x413).
     logo = _get_logo_image()
@@ -58,6 +59,13 @@ def _draw_header(c, company, doc_title, doc_number, page_width, page_height):
 
     c.setFont("Helvetica", 9)
     c.setFillColor(colors.black)
+    if legal_name:
+        y -= 4.5 * mm
+        c.setFont("Helvetica", 7.5)
+        c.setFillColor(colors.HexColor("#555555"))
+        c.drawRightString(text_x, y, legal_name)
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.black)
     if company.get("vat_number"):
         y -= 5 * mm
         c.drawRightString(text_x, y, f"VAT No: {company['vat_number']}")
@@ -69,7 +77,7 @@ def _draw_header(c, company, doc_title, doc_number, page_width, page_height):
     c.drawRightString(text_x, y, service_area)
 
     # Green/yellow divider bar under the header.
-    bar_y = page_height - 45 * mm
+    bar_y = page_height - 50 * mm
     c.setFillColor(BRAND_GREEN)
     c.rect(0, bar_y, page_width, 2 * mm, fill=1, stroke=0)
     c.setFillColor(BRAND_YELLOW)
@@ -115,16 +123,59 @@ def _draw_bill_to(c, client, x, y):
     return y - 8 * mm
 
 
-def generate_invoice_pdf(company, invoice, client, line_items):
+def _draw_rental_period(c, x, y, rental, invoice):
+    """
+    Draws a small section explaining the rental dates and, if relevant,
+    how the late fee was calculated. Only draws anything if the invoice
+    has this data saved on it (older invoices created before this feature
+    won't have it, and are left alone rather than showing blank/wrong info).
+    """
+    if invoice.get("days_out") is None:
+        return y
+
+    c.setFont("Helvetica-Bold", 10)
+    c.setFillColor(colors.black)
+    c.drawString(x, y, "Rental Period:")
+    c.setFont("Helvetica", 10)
+    y -= 5.5 * mm
+
+    delivery = rental.get("start_date", "?") if rental else "?"
+    pickup = rental.get("end_date") if rental else None
+    if pickup:
+        c.drawString(x, y, f"Delivery: {delivery}    Pickup: {pickup}")
+    else:
+        c.drawString(x, y, f"Delivery: {delivery}    Pickup: still out at time of invoicing")
+    y -= 5.5 * mm
+
+    c.drawString(x, y, f"Total days rented: {invoice['days_out']}")
+    y -= 5.5 * mm
+
+    weeks_late = invoice.get("weeks_late") or 0
+    late_fee = invoice.get("late_fee") or 0
+    if weeks_late > 0:
+        c.setFillColor(colors.HexColor("#B34700"))
+        c.drawString(x, y, f"{weeks_late} week(s) over the free rental period — late fee: EUR {float(late_fee):.2f}")
+        c.setFillColor(colors.black)
+    else:
+        c.drawString(x, y, "Within the free rental period — no late fee.")
+    y -= 5.5 * mm
+
+    return y - 3 * mm
+
+
+def generate_invoice_pdf(company, invoice, client, line_items, rental=None):
     """
     Builds a branded PDF invoice.
 
     company:     dict from the 'companies' table (name, address, vat_number, settings)
     invoice:     dict from the 'invoices' table (invoice_number, issue_date, subtotal,
-                 vat_rate, vat_amount, total_amount, status)
+                 vat_rate, vat_amount, total_amount, status, and optionally
+                 calculated_total, days_out, weeks_late, late_fee)
     client:      dict from the 'clients' table (name, address, phone)
     line_items:  list of dicts from 'invoice_line_items'
                  (description, quantity, unit_price, line_total)
+    rental:      optional dict from the 'rentals' table (start_date, end_date) —
+                 used to show the rental period section
     """
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -141,6 +192,7 @@ def generate_invoice_pdf(company, invoice, client, line_items):
     y -= 10 * mm
 
     y = _draw_bill_to(c, client, 15 * mm, y)
+    y = _draw_rental_period(c, 15 * mm, y, rental, invoice)
 
     # Line items table
     table_data = [["Description", "Qty", "Unit Price", "Line Total"]]
@@ -170,11 +222,30 @@ def generate_invoice_pdf(company, invoice, client, line_items):
     table.drawOn(c, 15 * mm, y - table_height)
     y = y - table_height - 8 * mm
 
-    # Totals block, right-aligned
-    totals_x_label = page_width - 65 * mm
+    # Totals block, right-aligned. If the final amount was changed from the
+    # calculated total (a discount or adjustment), show both so there's a
+    # clear paper trail of what happened.
+    totals_x_label = page_width - 90 * mm
     totals_x_value = page_width - 15 * mm
+    total_amount = float(invoice["total_amount"])
+    calculated_total = invoice.get("calculated_total")
+
     c.setFont("Helvetica", 10)
     c.setFillColor(colors.black)
+
+    if calculated_total is not None and abs(float(calculated_total) - total_amount) > 0.01:
+        diff = float(calculated_total) - total_amount
+        c.drawString(totals_x_label, y, "Calculated total:")
+        c.drawRightString(totals_x_value, y, f"EUR {float(calculated_total):.2f}")
+        y -= 6 * mm
+        if diff > 0:
+            c.drawString(totals_x_label, y, "Discount:")
+            c.drawRightString(totals_x_value, y, f"-EUR {diff:.2f}")
+        else:
+            c.drawString(totals_x_label, y, "Adjustment:")
+            c.drawRightString(totals_x_value, y, f"+EUR {abs(diff):.2f}")
+        y -= 8 * mm
+
     c.drawString(totals_x_label, y, "Net amount:")
     c.drawRightString(totals_x_value, y, f"EUR {float(invoice['subtotal']):.2f}")
     y -= 6 * mm
@@ -183,8 +254,8 @@ def generate_invoice_pdf(company, invoice, client, line_items):
     y -= 7 * mm
     c.setFont("Helvetica-Bold", 12)
     c.setFillColor(BRAND_GREEN)
-    c.drawString(totals_x_label, y, "Total:")
-    c.drawRightString(totals_x_value, y, f"EUR {float(invoice['total_amount']):.2f}")
+    c.drawString(totals_x_label, y, "Amount Charged:" if calculated_total is not None and abs(float(calculated_total) - total_amount) > 0.01 else "Total:")
+    c.drawRightString(totals_x_value, y, f"EUR {total_amount:.2f}")
 
     _draw_footer(c, page_width)
     c.showPage()

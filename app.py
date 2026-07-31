@@ -380,6 +380,10 @@ with tab_invoices:
                 "vat_rate": vat_rate,
                 "vat_amount": round(vat_amount, 2),
                 "total_amount": round(final_amount, 2),
+                "calculated_total": round(amounts["total_due"], 2),
+                "days_out": amounts["days_out"],
+                "weeks_late": amounts["weeks_late"],
+                "late_fee": round(amounts["late_fee"], 2),
                 "status": "Pending"
             }).execute().data[0]
 
@@ -397,7 +401,7 @@ with tab_invoices:
     st.divider()
     st.subheader("All Invoices")
     invoices = supabase.table("invoices").select(
-        "*, clients(name, address, phone)"
+        "*, clients(name, address, phone), rentals(start_date, end_date)"
     ).eq("company_id", company_id).order("invoice_number", desc=True).execute().data
     for inv in invoices:
         client = inv["clients"] or {"name": "Unknown client"}
@@ -419,7 +423,8 @@ VAT ({inv['vat_rate']}%): €{inv['vat_amount']:.2f}
             """)
 
             line_items = supabase.table("invoice_line_items").select("*").eq("invoice_id", inv["id"]).execute().data
-            pdf_bytes = generate_invoice_pdf(company, inv, client, line_items)
+            rental_info = inv.get("rentals")
+            pdf_bytes = generate_invoice_pdf(company, inv, client, line_items, rental_info)
             st.download_button(
                 label="📄 Download PDF",
                 data=pdf_bytes,
