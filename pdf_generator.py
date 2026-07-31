@@ -317,3 +317,4 @@ def generate_quote_pdf(company, quote, client, size_label):
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+    # rebuild trigger
