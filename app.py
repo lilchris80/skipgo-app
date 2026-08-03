@@ -50,7 +50,7 @@ st.markdown(
     """
     <style>
     [data-testid="stAppViewContainer"] {
-        background-color: #F7FAF7;
+        background-color: #E9EEF5;
     }
     .stTabs [data-baseweb="tab-list"] {
         gap: 4px;
