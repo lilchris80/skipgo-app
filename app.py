@@ -108,7 +108,8 @@ if not st.session_state.user:
             cookies.remove(COOKIE_NAME)
 
 if not st.session_state.user:
-    st.title("🗑️ SkipGO Login")
+    st.image("cycraftware_logo.png", width=200)
+    st.title("SkipGO Login")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     if st.button("Log in", type="primary"):
@@ -120,6 +121,15 @@ if not st.session_state.user:
 # ----------------------------------------------------------------
 company = st.session_state.company
 company_id = company["id"]
+
+header_col1, header_col2 = st.columns([3, 5])
+with header_col1:
+    st.image("cycraftware_logo.png", width=180)
+with header_col2:
+    st.markdown(
+        f"<div style='padding-top: 22px; color: #999999; font-size: 13px;'>for <b style='color:#555555;'>{company['name']}</b></div>",
+        unsafe_allow_html=True
+    )
 
 st.title(f"🗑️ {company['name']}")
 if st.button("Log out"):
