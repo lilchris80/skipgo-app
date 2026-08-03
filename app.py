@@ -153,7 +153,8 @@ with tab_skips:
     for skip in skips:
         status_emoji = "🟢" if skip["status"] == "available" else "🔴" if skip["status"] == "rented" else "🟡"
         size_label = skip["skip_types"]["size_label"] if skip.get("skip_types") else (skip.get("size") or "size not set")
-        st.write(f"{status_emoji} **Skip {skip['skip_number']}** — {size_label} — {skip['status']}")
+        with st.container(border=True):
+            st.write(f"{status_emoji} **Skip {skip['skip_number']}** — {size_label} — {skip['status']}")
 
     st.divider()
     st.subheader("Add a new skip")
@@ -193,59 +194,59 @@ with tab_rentals:
         client_name = r["clients"]["name"] if r["clients"] else "Unknown client"
         skip_number = r["skips"]["skip_number"] if r["skips"] else "?"
         amounts = calculate_amount_due(r["start_date"], None, float(r["base_price"]), float(r["weekly_late_rate"]), free_days, grace_days)
-        st.markdown(f"**Skip {skip_number}** — {client_name} — started {r['start_date']}")
-        st.caption(f"{amounts['days_out']} days out. " + (
-            f"⚠️ {amounts['weeks_late']} week(s) late — €{amounts['late_fee']:.2f} late fee added"
-            if amounts["weeks_late"] > 0 else "Within free period."
-        ) + f" **Total due: €{amounts['total_due']:.2f}**")
+        with st.container(border=True):
+            st.markdown(f"**Skip {skip_number}** — {client_name} — started {r['start_date']}")
+            st.caption(f"{amounts['days_out']} days out. " + (
+                f"⚠️ {amounts['weeks_late']} week(s) late — €{amounts['late_fee']:.2f} late fee added"
+                if amounts["weeks_late"] > 0 else "Within free period."
+            ) + f" **Total due: €{amounts['total_due']:.2f}**")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("Mark Returned", key=f"return_{r['id']}"):
-                supabase.table("rentals").update({"end_date": str(date.today())}).eq("id", r["id"]).execute()
-                supabase.table("skips").update({"status": "available"}).eq("id", r["skip_id"]).execute()
-                st.rerun()
-        with col2:
-            if r["payment_status"] != "Paid":
-                if st.button("Mark Paid", key=f"paid_{r['id']}"):
-                    supabase.table("rentals").update({"payment_status": "Paid"}).eq("id", r["id"]).execute()
-                    st.rerun()
-            else:
-                st.write("✅ Paid")
-        with col3:
-            if st.button("🔄 Swap Skip", key=f"swap_toggle_{r['id']}"):
-                st.session_state[f"swapping_{r['id']}"] = not st.session_state.get(f"swapping_{r['id']}", False)
-
-        if st.session_state.get(f"swapping_{r['id']}", False):
-            st.caption("Closes this rental today and opens a new one with a different skip, for the same client.")
-            if not available_skips_for_swap:
-                st.warning("No other available skips to swap to.")
-            else:
-                swap_options = {s["skip_number"]: s["id"] for s in available_skips_for_swap}
-                chosen_swap = st.selectbox("New skip", options=list(swap_options.keys()), key=f"swap_select_{r['id']}")
-                if st.button("Confirm Swap", key=f"swap_confirm_{r['id']}", type="primary"):
-                    old_skip_id = r["skip_id"]
-                    new_skip_id = swap_options[chosen_swap]
-
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("Mark Returned", key=f"return_{r['id']}"):
                     supabase.table("rentals").update({"end_date": str(date.today())}).eq("id", r["id"]).execute()
-                    supabase.table("skips").update({"status": "available"}).eq("id", old_skip_id).execute()
-
-                    supabase.table("rentals").insert({
-                        "company_id": company_id,
-                        "client_id": r["client_id"],
-                        "skip_id": new_skip_id,
-                        "start_date": str(date.today()),
-                        "base_price": r["base_price"],
-                        "weekly_late_rate": r["weekly_late_rate"],
-                        "payment_status": "Pending",
-                        "created_at": "now()"
-                    }).execute()
-                    supabase.table("skips").update({"status": "rented"}).eq("id", new_skip_id).execute()
-
-                    st.session_state[f"swapping_{r['id']}"] = False
-                    st.success(f"Swapped to Skip {chosen_swap} for {client_name}.")
+                    supabase.table("skips").update({"status": "available"}).eq("id", r["skip_id"]).execute()
                     st.rerun()
-        st.divider()
+            with col2:
+                if r["payment_status"] != "Paid":
+                    if st.button("Mark Paid", key=f"paid_{r['id']}"):
+                        supabase.table("rentals").update({"payment_status": "Paid"}).eq("id", r["id"]).execute()
+                        st.rerun()
+                else:
+                    st.write("✅ Paid")
+            with col3:
+                if st.button("🔄 Swap Skip", key=f"swap_toggle_{r['id']}"):
+                    st.session_state[f"swapping_{r['id']}"] = not st.session_state.get(f"swapping_{r['id']}", False)
+
+            if st.session_state.get(f"swapping_{r['id']}", False):
+                st.caption("Closes this rental today and opens a new one with a different skip, for the same client.")
+                if not available_skips_for_swap:
+                    st.warning("No other available skips to swap to.")
+                else:
+                    swap_options = {s["skip_number"]: s["id"] for s in available_skips_for_swap}
+                    chosen_swap = st.selectbox("New skip", options=list(swap_options.keys()), key=f"swap_select_{r['id']}")
+                    if st.button("Confirm Swap", key=f"swap_confirm_{r['id']}", type="primary"):
+                        old_skip_id = r["skip_id"]
+                        new_skip_id = swap_options[chosen_swap]
+
+                        supabase.table("rentals").update({"end_date": str(date.today())}).eq("id", r["id"]).execute()
+                        supabase.table("skips").update({"status": "available"}).eq("id", old_skip_id).execute()
+
+                        supabase.table("rentals").insert({
+                            "company_id": company_id,
+                            "client_id": r["client_id"],
+                            "skip_id": new_skip_id,
+                            "start_date": str(date.today()),
+                            "base_price": r["base_price"],
+                            "weekly_late_rate": r["weekly_late_rate"],
+                            "payment_status": "Pending",
+                            "created_at": "now()"
+                        }).execute()
+                        supabase.table("skips").update({"status": "rented"}).eq("id", new_skip_id).execute()
+
+                        st.session_state[f"swapping_{r['id']}"] = False
+                        st.success(f"Swapped to Skip {chosen_swap} for {client_name}.")
+                        st.rerun()
 
 # ----------------------------------------------------------------
 # TAB: NEW RENTAL
@@ -340,7 +341,8 @@ with tab_clients:
     st.subheader("Clients")
     clients = supabase.table("clients").select("*").eq("company_id", company_id).execute().data
     for c in clients:
-        st.write(f"**{c['name']}** — {c.get('phone') or 'no phone'}")
+        with st.container(border=True):
+            st.write(f"**{c['name']}** — {c.get('phone') or 'no phone'}")
 
     st.divider()
     st.subheader("Add a new client")
