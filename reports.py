@@ -11,9 +11,11 @@ BRAND_GREEN_LIGHT = colors.HexColor("#E8F5EC")
 
 
 def build_invoices_csv(invoices):
-    """Builds a CSV file (as text) from a list of invoice dicts."""
+    """Builds a CSV file (as text) from a list of invoice dicts.
+    Uses semicolons (not commas) as the separator, since that's what
+    European-locale Excel installations expect by default."""
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = csv.writer(output, delimiter=";")
     writer.writerow(["Invoice #", "Date", "Client", "Net (EUR)", "VAT (EUR)", "Total (EUR)", "Status"])
     for inv in invoices:
         client_name = inv["clients"]["name"] if inv.get("clients") else "Unknown"
@@ -30,9 +32,10 @@ def build_invoices_csv(invoices):
 
 
 def build_quotes_csv(quotes):
-    """Builds a CSV file (as text) from a list of quote dicts."""
+    """Builds a CSV file (as text) from a list of quote dicts.
+    Uses semicolons as the separator, same reasoning as invoices."""
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = csv.writer(output, delimiter=";")
     writer.writerow(["Quote #", "Date", "Client", "Skip Size", "Quoted Price (EUR)", "Status"])
     for q in quotes:
         client_name = q["clients"]["name"] if q.get("clients") else "Unknown"
