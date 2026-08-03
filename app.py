@@ -3,6 +3,7 @@ from supabase import create_client
 from datetime import date
 import math
 from pdf_generator import generate_invoice_pdf, generate_quote_pdf
+from streamlit_cookies_controller import CookieController
 
 def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_rate, free_days, grace_days=0):
     """
@@ -48,9 +49,24 @@ st.set_page_config(page_title="SkipGO", page_icon="🗑️", layout="centered")
 # ----------------------------------------------------------------
 # LOGIN
 # ----------------------------------------------------------------
+COOKIE_NAME = "skipgo_refresh_token"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 400  # 400 days — the maximum browsers allow.
+# This gets refreshed to a new 400-day window every time the app is opened,
+# so as long as it's used at least once within any 400-day stretch, it
+# effectively never expires. After 400 days of total inactivity, a normal
+# login is needed again.
+
+cookies = CookieController()
+
 if "user" not in st.session_state:
     st.session_state.user = None
     st.session_state.company = None
+
+def _load_company_for_user(user_id):
+    profile = supabase.table("app_users").select("*").eq("id", user_id).single().execute()
+    company_id = profile.data["company_id"]
+    company = supabase.table("companies").select("*").eq("id", company_id).single().execute()
+    return company.data
 
 USERNAME_DOMAIN = "@skipgo.internal"
 
@@ -59,12 +75,10 @@ def login(username, password):
         email = username.strip().lower() + USERNAME_DOMAIN
         result = supabase.auth.sign_in_with_password({"email": email, "password": password})
         st.session_state.user = result.user
+        st.session_state.company = _load_company_for_user(result.user.id)
 
-        profile = supabase.table("app_users").select("*").eq("id", result.user.id).single().execute()
-        company_id = profile.data["company_id"]
-
-        company = supabase.table("companies").select("*").eq("id", company_id).single().execute()
-        st.session_state.company = company.data
+        if result.session and result.session.refresh_token:
+            cookies.set(COOKIE_NAME, result.session.refresh_token, max_age=COOKIE_MAX_AGE)
 
         st.rerun()
     except Exception as e:
@@ -74,7 +88,24 @@ def logout():
     supabase.auth.sign_out()
     st.session_state.user = None
     st.session_state.company = None
+    cookies.remove(COOKIE_NAME)
     st.rerun()
+
+# If this browser isn't already logged in for this session (e.g. the page
+# was just refreshed), try to silently restore login using the saved cookie
+# before showing the login screen.
+if not st.session_state.user:
+    saved_refresh_token = cookies.get(COOKIE_NAME)
+    if saved_refresh_token:
+        try:
+            result = supabase.auth.refresh_session(saved_refresh_token)
+            st.session_state.user = result.user
+            st.session_state.company = _load_company_for_user(result.user.id)
+            if result.session and result.session.refresh_token:
+                cookies.set(COOKIE_NAME, result.session.refresh_token, max_age=COOKIE_MAX_AGE)
+        except Exception:
+            # Saved token is invalid or expired — fall through to a normal login screen.
+            cookies.remove(COOKIE_NAME)
 
 if not st.session_state.user:
     st.title("🗑️ SkipGO Login")
