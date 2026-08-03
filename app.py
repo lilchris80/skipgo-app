@@ -52,8 +52,11 @@ if "user" not in st.session_state:
     st.session_state.user = None
     st.session_state.company = None
 
-def login(email, password):
+USERNAME_DOMAIN = "@skipgo.internal"
+
+def login(username, password):
     try:
+        email = username.strip().lower() + USERNAME_DOMAIN
         result = supabase.auth.sign_in_with_password({"email": email, "password": password})
         st.session_state.user = result.user
 
@@ -65,7 +68,7 @@ def login(email, password):
 
         st.rerun()
     except Exception as e:
-        st.error(f"Login failed: {e}")
+        st.error("Login failed — check your username and password.")
 
 def logout():
     supabase.auth.sign_out()
@@ -75,10 +78,10 @@ def logout():
 
 if not st.session_state.user:
     st.title("🗑️ SkipGO Login")
-    email = st.text_input("Email")
+    username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     if st.button("Log in", type="primary"):
-        login(email, password)
+        login(username, password)
     st.stop()
 
 # ----------------------------------------------------------------
