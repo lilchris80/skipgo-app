@@ -122,14 +122,16 @@ if not st.session_state.user:
 company = st.session_state.company
 company_id = company["id"]
 
-header_col1, header_col2 = st.columns([3, 5])
-with header_col1:
-    st.image("cycraftware_logo.png", width=180)
-with header_col2:
-    st.markdown(
-        f"<div style='padding-top: 18px; font-size: 34px; font-weight: 700; color: #333333;'>{company['name']}</div>",
-        unsafe_allow_html=True
-    )
+st.markdown(
+    f"""
+    <div style='display: flex; align-items: center; gap: 14px; padding: 6px 0 10px 0;'>
+        <img src="data:image/png;base64,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" style="height: 46px;">
+        <div style='height: 32px; width: 1px; background-color: #dddddd;'></div>
+        <div style='font-size: 32px; font-weight: 700; color: #333333;'>{company['name']}</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 if st.button("Log out"):
     logout()
