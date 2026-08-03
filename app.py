@@ -580,3 +580,27 @@ with tab_history:
 
         st.divider()
         st.markdown(f"### Outstanding balance: €{total_owed:.2f}")
+
+# ----------------------------------------------------------------
+# FOOTER — "Powered by CyCraftware" branding.
+# This same block can be copy-pasted as-is into any future product
+# (Hylates, etc.) to keep the branding consistent everywhere.
+# ----------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    .cycraftware-footer {
+        text-align: center;
+        color: #999999;
+        font-size: 12px;
+        padding: 30px 0 10px 0;
+        margin-top: 40px;
+        border-top: 1px solid #eeeeee;
+    }
+    </style>
+    <div class="cycraftware-footer">
+        Powered by CyCraftware
+    </div>
+    """,
+    unsafe_allow_html=True
+)
