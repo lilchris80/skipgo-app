@@ -44,7 +44,24 @@ def get_client():
 
 supabase = get_client()
 
-st.set_page_config(page_title="SkipGO", page_icon="🗑️", layout="centered")
+st.set_page_config(page_title="SkipGO", page_icon="🗑️", layout="wide")
+
+st.markdown(
+    """
+    <style>
+    [data-testid="stAppViewContainer"] {
+        background-color: #F7FAF7;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+    }
+    h3 {
+        color: #035B2B !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # ----------------------------------------------------------------
 # LOGIN
