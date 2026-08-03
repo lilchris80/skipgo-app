@@ -127,11 +127,10 @@ with header_col1:
     st.image("cycraftware_logo.png", width=180)
 with header_col2:
     st.markdown(
-        f"<div style='padding-top: 22px; color: #999999; font-size: 13px;'>for <b style='color:#555555;'>{company['name']}</b></div>",
+        f"<div style='padding-top: 18px; font-size: 34px; font-weight: 700; color: #333333;'>{company['name']}</div>",
         unsafe_allow_html=True
     )
 
-st.title(f"🗑️ {company['name']}")
 if st.button("Log out"):
     logout()
 
