@@ -136,8 +136,8 @@ st.markdown(
 if st.button("Log out"):
     logout()
 
-tab_skips, tab_rentals, tab_new_rental, tab_clients, tab_invoices, tab_quotes, tab_history = st.tabs(
-    ["Skips", "Active Rentals", "New Rental", "Clients", "Invoices", "Quotes", "Client History"]
+tab_skips, tab_rentals, tab_new_rental, tab_clients, tab_invoices, tab_quotes, tab_history, tab_settings = st.tabs(
+    ["Skips", "Active Rentals", "New Rental", "Clients", "Invoices", "Quotes", "Client History", "Settings"]
 )
 
 # ----------------------------------------------------------------
@@ -593,6 +593,79 @@ with tab_history:
 
         st.divider()
         st.markdown(f"### Outstanding balance: €{total_owed:.2f}")
+
+# ----------------------------------------------------------------
+# TAB: SETTINGS
+# ----------------------------------------------------------------
+with tab_settings:
+    st.subheader("Rental Rules")
+    st.caption("These apply to every rental company-wide, unless a specific rental overrides the price manually.")
+
+    current_settings = company.get("settings") or {}
+    with st.form("company_rules"):
+        free_days_input = st.number_input(
+            "Free days before late fee starts",
+            min_value=0, value=int(current_settings.get("free_days", 30)), step=1
+        )
+        grace_days_input = st.number_input(
+            "Grace days after the free period (still no charge)",
+            min_value=0, value=int(current_settings.get("grace_days", 3)), step=1
+        )
+        weekly_rate_input = st.number_input(
+            "Default weekly late fee (€) — used for new skip types unless overridden below",
+            min_value=0.0, value=float(current_settings.get("weekly_late_rate", 50.0)), step=5.0
+        )
+        if st.form_submit_button("Save Rules", type="primary"):
+            new_settings = dict(current_settings)
+            new_settings["free_days"] = int(free_days_input)
+            new_settings["grace_days"] = int(grace_days_input)
+            new_settings["weekly_late_rate"] = float(weekly_rate_input)
+            supabase.table("companies").update({"settings": new_settings}).eq("id", company_id).execute()
+            st.session_state.company["settings"] = new_settings
+            st.success("Rules updated.")
+            st.rerun()
+
+    st.divider()
+    st.subheader("Skip Types & Pricing")
+    st.caption("Change the label (e.g. switch from yards to cubic meters) or the starting price for each size.")
+
+    skip_types_all = supabase.table("skip_types").select("*").eq("company_id", company_id).order("gross_price").execute().data
+    for t in skip_types_all:
+        with st.container(border=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                new_label = st.text_input("Size label", value=t["size_label"], key=f"label_{t['id']}")
+            with col2:
+                new_price = st.number_input("Price (€)", min_value=0.0, value=float(t["gross_price"]), step=5.0, key=f"price_{t['id']}")
+            with col3:
+                new_rate = st.number_input("Weekly late rate (€)", min_value=0.0, value=float(t.get("weekly_late_rate") or 0), step=5.0, key=f"rate_{t['id']}")
+            if st.button("Save Changes", key=f"save_type_{t['id']}"):
+                supabase.table("skip_types").update({
+                    "size_label": new_label,
+                    "gross_price": new_price,
+                    "weekly_late_rate": new_rate
+                }).eq("id", t["id"]).execute()
+                st.success(f"Updated {new_label}.")
+                st.rerun()
+
+    st.divider()
+    st.subheader("Add a New Skip Type")
+    with st.form("add_skip_type", clear_on_submit=True):
+        new_type_label = st.text_input("Size label (e.g. 6 m³)")
+        new_type_price = st.number_input("Starting price (€)", min_value=0.0, value=160.0, step=5.0)
+        new_type_rate = st.number_input("Weekly late rate (€)", min_value=0.0, value=50.0, step=5.0)
+        if st.form_submit_button("Add Skip Type"):
+            if not new_type_label.strip():
+                st.error("Size label can't be blank.")
+            else:
+                supabase.table("skip_types").insert({
+                    "company_id": company_id,
+                    "size_label": new_type_label,
+                    "gross_price": new_type_price,
+                    "weekly_late_rate": new_type_rate
+                }).execute()
+                st.success("Skip type added.")
+                st.rerun()
 
 # ----------------------------------------------------------------
 # FOOTER — "Powered by CyCraftware" branding.
