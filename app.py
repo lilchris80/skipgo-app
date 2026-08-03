@@ -3,6 +3,7 @@ from supabase import create_client
 from datetime import date
 import math
 from pdf_generator import generate_invoice_pdf, generate_quote_pdf
+from reports import build_invoices_csv, build_quotes_csv, generate_invoice_report_pdf, generate_quote_report_pdf
 from streamlit_cookies_controller import CookieController
 
 def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_rate, free_days, grace_days=0):
@@ -50,7 +51,7 @@ st.markdown(
     """
     <style>
     [data-testid="stAppViewContainer"] {
-        background-color: #E9EEF5;
+        background-color: #E4F1E8;
     }
     .stTabs [data-baseweb="tab-list"] {
         gap: 4px;
@@ -464,9 +465,63 @@ with tab_invoices:
 
     st.divider()
     st.subheader("All Invoices")
-    invoices = supabase.table("invoices").select(
+
+    all_clients_for_filter = supabase.table("clients").select("id, name").eq("company_id", company_id).execute().data
+    client_filter_options = {"All clients": None}
+    client_filter_options.update({c["name"]: c["id"] for c in all_clients_for_filter})
+
+    fcol1, fcol2, fcol3, fcol4 = st.columns(4)
+    with fcol1:
+        filter_date_from = st.date_input("From date", value=None, key="inv_filter_from")
+    with fcol2:
+        filter_date_to = st.date_input("To date", value=None, key="inv_filter_to")
+    with fcol3:
+        filter_client_label = st.selectbox("Client", options=list(client_filter_options.keys()), key="inv_filter_client")
+    with fcol4:
+        filter_status = st.selectbox("Status", ["All", "Pending", "Paid"], key="inv_filter_status")
+
+    invoices_query = supabase.table("invoices").select(
         "*, clients(name, address, phone), rentals(start_date, end_date)"
-    ).eq("company_id", company_id).order("invoice_number", desc=True).execute().data
+    ).eq("company_id", company_id)
+    if filter_date_from:
+        invoices_query = invoices_query.gte("issue_date", str(filter_date_from))
+    if filter_date_to:
+        invoices_query = invoices_query.lte("issue_date", str(filter_date_to))
+    if client_filter_options[filter_client_label] is not None:
+        invoices_query = invoices_query.eq("client_id", client_filter_options[filter_client_label])
+    if filter_status != "All":
+        invoices_query = invoices_query.eq("status", filter_status)
+    invoices = invoices_query.order("invoice_number", desc=True).execute().data
+
+    filter_parts = []
+    if filter_date_from or filter_date_to:
+        filter_parts.append(f"Dates: {filter_date_from or 'any'} to {filter_date_to or 'any'}")
+    if filter_client_label != "All clients":
+        filter_parts.append(f"Client: {filter_client_label}")
+    if filter_status != "All":
+        filter_parts.append(f"Status: {filter_status}")
+    filter_description = " | ".join(filter_parts) if filter_parts else "All invoices, no filters applied"
+
+    st.caption(f"Showing {len(invoices)} invoice(s). {filter_description}")
+
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        st.download_button(
+            "📊 Download CSV",
+            data=build_invoices_csv(invoices),
+            file_name="invoices_report.csv",
+            mime="text/csv",
+            disabled=len(invoices) == 0
+        )
+    with dl_col2:
+        st.download_button(
+            "📄 Download PDF Report",
+            data=generate_invoice_report_pdf(company, invoices, filter_description) if invoices else b"",
+            file_name="invoices_report.pdf",
+            mime="application/pdf",
+            disabled=len(invoices) == 0
+        )
+
     for inv in invoices:
         client = inv["clients"] or {"name": "Unknown client"}
         with st.expander(f"Invoice #{inv['invoice_number']} — {client['name']} — €{inv['total_amount']:.2f} — {inv['status']}"):
@@ -541,9 +596,58 @@ with tab_quotes:
 
     st.divider()
     st.subheader("All Quotes")
-    quotes = supabase.table("quotes").select(
+
+    q_client_filter_options = {"All clients": None}
+    q_client_filter_options.update({c["name"]: c["id"] for c in clients})
+
+    qfcol1, qfcol2, qfcol3 = st.columns(3)
+    with qfcol1:
+        q_filter_date_from = st.date_input("From date", value=None, key="quote_filter_from")
+    with qfcol2:
+        q_filter_date_to = st.date_input("To date", value=None, key="quote_filter_to")
+    with qfcol3:
+        q_filter_client_label = st.selectbox("Client", options=list(q_client_filter_options.keys()), key="quote_filter_client")
+
+    quotes_query = supabase.table("quotes").select(
         "*, clients(name, address, phone), skip_types(size_label)"
-    ).eq("company_id", company_id).order("quote_number", desc=True).execute().data
+    ).eq("company_id", company_id)
+    if q_filter_date_from:
+        quotes_query = quotes_query.gte("issue_date", str(q_filter_date_from))
+    if q_filter_date_to:
+        quotes_query = quotes_query.lte("issue_date", str(q_filter_date_to))
+    if q_client_filter_options[q_filter_client_label] is not None:
+        quotes_query = quotes_query.eq("client_id", q_client_filter_options[q_filter_client_label])
+    quotes = quotes_query.order("quote_number", desc=True).execute().data
+
+    q_filter_parts = []
+    if q_filter_date_from or q_filter_date_to:
+        q_filter_parts.append(f"Dates: {q_filter_date_from or 'any'} to {q_filter_date_to or 'any'}")
+    if q_filter_client_label != "All clients":
+        q_filter_parts.append(f"Client: {q_filter_client_label}")
+    q_filter_description = " | ".join(q_filter_parts) if q_filter_parts else "All quotes, no filters applied"
+
+    st.caption(f"Showing {len(quotes)} quote(s). {q_filter_description}")
+
+    qdl_col1, qdl_col2 = st.columns(2)
+    with qdl_col1:
+        st.download_button(
+            "📊 Download CSV",
+            data=build_quotes_csv(quotes),
+            file_name="quotes_report.csv",
+            mime="text/csv",
+            key="quotes_csv_dl",
+            disabled=len(quotes) == 0
+        )
+    with qdl_col2:
+        st.download_button(
+            "📄 Download PDF Report",
+            data=generate_quote_report_pdf(company, quotes, q_filter_description) if quotes else b"",
+            file_name="quotes_report.pdf",
+            mime="application/pdf",
+            key="quotes_pdf_dl",
+            disabled=len(quotes) == 0
+        )
+
     for q in quotes:
         client = q["clients"] or {"name": "Unknown client"}
         size_label = q["skip_types"]["size_label"] if q["skip_types"] else "?"
