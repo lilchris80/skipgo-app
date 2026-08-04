@@ -3,6 +3,8 @@ from supabase import create_client
 from datetime import date
 import math
 import base64
+import uuid
+import streamlit.components.v1 as components
 from pdf_generator import generate_invoice_pdf, generate_quote_pdf
 from reports import build_invoices_csv, build_quotes_csv, generate_invoice_report_pdf, generate_quote_report_pdf
 from streamlit_cookies_controller import CookieController
@@ -48,23 +50,40 @@ supabase = get_client()
 
 def pdf_view_button(label, pdf_bytes):
     """
-    Renders a button-styled link that opens a PDF directly in a new
-    browser tab (using the browser's own PDF viewer), rather than
-    forcing a download. From that tab, the person can print or save
-    it themselves using the browser's own controls.
+    Renders a button that opens a PDF in a new browser tab using the
+    browser's own PDF viewer, rather than forcing a download.
+
+    Technical note: a plain link straight to a base64 PDF (data: URL)
+    gets silently blocked by modern Chrome/Edge when opened in a new tab
+    - this is a deliberate anti-phishing restriction, not a bug. The
+    workaround is to convert the PDF into a temporary in-browser file
+    (a "Blob") using JavaScript, and open THAT instead - blob: URLs
+    aren't subject to the same block.
     """
     b64 = base64.b64encode(pdf_bytes).decode()
-    st.markdown(
-        f"""
-        <a href="data:application/pdf;base64,{b64}" target="_blank"
-           style="display:inline-block;padding:0.45em 1em;background-color:#035B2B;
-                  color:white;border-radius:6px;text-decoration:none;font-weight:600;
-                  font-size:14px;margin:4px 0;">
-            {label}
-        </a>
-        """,
-        unsafe_allow_html=True
-    )
+    button_id = f"pdfbtn_{uuid.uuid4().hex}"
+    html = f"""
+    <button id="{button_id}" style="display:inline-block;padding:0.5em 1.1em;
+        background-color:#035B2B;color:white;border:none;border-radius:6px;
+        font-weight:600;font-size:14px;cursor:pointer;margin:4px 0;">
+        {label}
+    </button>
+    <script>
+    document.getElementById("{button_id}").addEventListener("click", function() {{
+        const b64 = "{b64}";
+        const byteChars = atob(b64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {{
+            byteNumbers[i] = byteChars.charCodeAt(i);
+        }}
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], {{ type: "application/pdf" }});
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+    }});
+    </script>
+    """
+    components.html(html, height=50)
 
 st.set_page_config(page_title="SkipGO", page_icon="🗑️", layout="wide")
 
