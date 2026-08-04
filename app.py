@@ -2,6 +2,7 @@ import streamlit as st
 from supabase import create_client
 from datetime import date
 import math
+import base64
 from pdf_generator import generate_invoice_pdf, generate_quote_pdf
 from reports import build_invoices_csv, build_quotes_csv, generate_invoice_report_pdf, generate_quote_report_pdf
 from streamlit_cookies_controller import CookieController
@@ -44,6 +45,26 @@ def get_client():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = get_client()
+
+def pdf_view_button(label, pdf_bytes):
+    """
+    Renders a button-styled link that opens a PDF directly in a new
+    browser tab (using the browser's own PDF viewer), rather than
+    forcing a download. From that tab, the person can print or save
+    it themselves using the browser's own controls.
+    """
+    b64 = base64.b64encode(pdf_bytes).decode()
+    st.markdown(
+        f"""
+        <a href="data:application/pdf;base64,{b64}" target="_blank"
+           style="display:inline-block;padding:0.45em 1em;background-color:#035B2B;
+                  color:white;border-radius:6px;text-decoration:none;font-weight:600;
+                  font-size:14px;margin:4px 0;">
+            {label}
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
 
 st.set_page_config(page_title="SkipGO", page_icon="🗑️", layout="wide")
 
@@ -514,13 +535,10 @@ with tab_invoices:
             disabled=len(invoices) == 0
         )
     with dl_col2:
-        st.download_button(
-            "📄 Download PDF Report",
-            data=generate_invoice_report_pdf(company, invoices, filter_description) if invoices else b"",
-            file_name="invoices_report.pdf",
-            mime="application/pdf",
-            disabled=len(invoices) == 0
-        )
+        if invoices:
+            pdf_view_button("📄 Open PDF Report", generate_invoice_report_pdf(company, invoices, filter_description))
+        else:
+            st.button("📄 Open PDF Report", disabled=True)
 
     for inv in invoices:
         client = inv["clients"] or {"name": "Unknown client"}
@@ -544,13 +562,7 @@ VAT ({inv['vat_rate']}%): €{inv['vat_amount']:.2f}
             line_items = supabase.table("invoice_line_items").select("*").eq("invoice_id", inv["id"]).execute().data
             rental_info = inv.get("rentals")
             pdf_bytes = generate_invoice_pdf(company, inv, client, line_items, rental_info)
-            st.download_button(
-                label="📄 Download PDF",
-                data=pdf_bytes,
-                file_name=f"Invoice_{inv['invoice_number']}.pdf",
-                mime="application/pdf",
-                key=f"pdf_inv_{inv['id']}"
-            )
+            pdf_view_button("📄 Open PDF", pdf_bytes)
 
             if inv["status"] != "Paid":
                 if st.button("Mark Paid", key=f"inv_paid_{inv['id']}"):
@@ -639,14 +651,10 @@ with tab_quotes:
             disabled=len(quotes) == 0
         )
     with qdl_col2:
-        st.download_button(
-            "📄 Download PDF Report",
-            data=generate_quote_report_pdf(company, quotes, q_filter_description) if quotes else b"",
-            file_name="quotes_report.pdf",
-            mime="application/pdf",
-            key="quotes_pdf_dl",
-            disabled=len(quotes) == 0
-        )
+        if quotes:
+            pdf_view_button("📄 Open PDF Report", generate_quote_report_pdf(company, quotes, q_filter_description))
+        else:
+            st.button("📄 Open PDF Report", disabled=True, key="quotes_pdf_disabled")
 
     for q in quotes:
         client = q["clients"] or {"name": "Unknown client"}
@@ -664,13 +672,7 @@ Skip size: {size_label}
             """)
 
             pdf_bytes = generate_quote_pdf(company, q, client, size_label)
-            st.download_button(
-                label="📄 Download PDF",
-                data=pdf_bytes,
-                file_name=f"Quote_{q['quote_number']}.pdf",
-                mime="application/pdf",
-                key=f"pdf_quote_{q['id']}"
-            )
+            pdf_view_button("📄 Open PDF", pdf_bytes)
 
             if q["status"] == "Pending":
                 col1, col2 = st.columns(2)
