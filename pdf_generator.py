@@ -332,6 +332,11 @@ def generate_quote_pdf(company, quote, client, size_label):
             15 * mm, y,
             f"Includes up to {quote['free_days']} days. After that: EUR {float(quote['weekly_late_rate']):.2f}/week until returned."
         )
+        y -= 5 * mm
+        c.drawString(
+            15 * mm, y,
+            "Replacing this skip with a new one at any time is charged again at the full quoted price above."
+        )
         y -= 6 * mm
 
     c.setFont("Helvetica-Oblique", 9)

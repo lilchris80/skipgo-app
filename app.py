@@ -720,6 +720,7 @@ Skip size: {size_label}
 
 **Quoted price: €{q['quoted_price']:.2f}** (VAT included)
 {f"Includes up to {q['free_days']} days. After that: €{float(q['weekly_late_rate']):.2f}/week until returned." if q.get('free_days') is not None else ""}
+{"Replacing this skip with a new one at any time is charged again at the full quoted price above." if q.get('free_days') is not None else ""}
             """)
 
             pdf_bytes = generate_quote_pdf(company, q, client, size_label)
