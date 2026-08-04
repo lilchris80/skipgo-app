@@ -36,6 +36,22 @@ def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_r
         "total_due": base_price + late_fee
     }
 
+def fmt_date(value):
+    """
+    Converts a date (either an ISO string like '2026-08-03' from the
+    database, or a real date object from a date picker) into DD/MM/YYYY
+    for display. Anything that isn't a real date (None, 'Not set', etc.)
+    is returned unchanged rather than causing an error.
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value)
+        except ValueError:
+            return value
+    return value.strftime("%d/%m/%Y")
+
 # ----------------------------------------------------------------
 # CONNECTION SETUP
 # ----------------------------------------------------------------
@@ -253,7 +269,7 @@ with tab_rentals:
         skip_number = r["skips"]["skip_number"] if r["skips"] else "?"
         amounts = calculate_amount_due(r["start_date"], None, float(r["base_price"]), float(r["weekly_late_rate"]), free_days, grace_days)
         with st.container(border=True):
-            st.markdown(f"**Skip {skip_number}** — {client_name} — started {r['start_date']}")
+            st.markdown(f"**Skip {skip_number}** — {client_name} — started {fmt_date(r['start_date'])}")
             st.caption(f"{amounts['days_out']} days out. " + (
                 f"⚠️ {amounts['weeks_late']} week(s) late — €{amounts['late_fee']:.2f} late fee added"
                 if amounts["weeks_late"] > 0 else "Within free period."
@@ -316,7 +332,7 @@ with tab_new_rental:
         info = st.session_state.last_rental_created
         st.success(
             f"✅ Rental created — Skip {info['skip']} for {info['client']}\n\n"
-            f"Delivery: {info['delivery']} • Estimated pickup: {info['pickup']}\n\n"
+            f"Delivery: {fmt_date(info['delivery'])} • Estimated pickup: {fmt_date(info['pickup'])}\n\n"
             f"Base price: €{info['base_price']:.2f}"
         )
         if st.button("Dismiss"):
@@ -346,8 +362,8 @@ with tab_new_rental:
         default_price = float(skip_type.get("gross_price", 0))
         default_weekly_rate = float(skip_type.get("weekly_late_rate", company["settings"].get("weekly_late_rate", 0)))
 
-        delivery_date = st.date_input("Delivery date", value=date.today(), key=f"delivery_{form_key}")
-        estimated_pickup = st.date_input("Estimated pickup date (optional — for planning only)", value=None, key=f"pickup_{form_key}")
+        delivery_date = st.date_input("Delivery date", value=date.today(), key=f"delivery_{form_key}", format="DD/MM/YYYY")
+        estimated_pickup = st.date_input("Estimated pickup date (optional — for planning only)", value=None, key=f"pickup_{form_key}", format="DD/MM/YYYY")
 
         base_price = st.number_input("Base price (€)", min_value=0.0, value=default_price, step=5.0, key=f"price_{form_key}")
         weekly_rate = st.number_input("Weekly late rate (€)", min_value=0.0, value=default_weekly_rate, step=5.0, key=f"rate_{form_key}")
@@ -357,7 +373,7 @@ with tab_new_rental:
                 str(delivery_date), str(estimated_pickup), base_price, weekly_rate, free_days, grace_days
             )
             st.info(
-                f"📋 **Preview based on estimated pickup ({estimated_pickup}):**\n\n"
+                f"📋 **Preview based on estimated pickup ({fmt_date(estimated_pickup)}):**\n\n"
                 f"{preview['days_out']} days total. " +
                 (f"⚠️ {preview['weeks_late']} week(s) over the {free_days}-day free period — "
                  f"€{preview['late_fee']:.2f} late fee would apply.\n\n"
@@ -444,7 +460,7 @@ with tab_invoices:
         st.info("No rentals waiting to be invoiced.")
     else:
         rental_labels = {
-            f"Skip {r['skips']['skip_number']} — {r['clients']['name']} — started {r['start_date']}": r
+            f"Skip {r['skips']['skip_number']} — {r['clients']['name']} — started {fmt_date(r['start_date'])}": r
             for r in uninvoiced
         }
         chosen_label = st.selectbox("Choose a rental to invoice", options=list(rental_labels.keys()))
@@ -454,7 +470,7 @@ with tab_invoices:
             rental["start_date"], rental["end_date"],
             float(rental["base_price"]), float(rental["weekly_late_rate"]), free_days, grace_days
         )
-        st.write(f"Delivery date: {rental['start_date']}")
+        st.write(f"Delivery date: {fmt_date(rental['start_date'])}")
         st.write(f"Days out so far: {amounts['days_out']}")
         st.write(f"Base price: €{rental['base_price']:.2f}")
         if amounts["weeks_late"] > 0:
@@ -512,9 +528,9 @@ with tab_invoices:
 
     fcol1, fcol2, fcol3, fcol4 = st.columns(4)
     with fcol1:
-        filter_date_from = st.date_input("From date", value=None, key="inv_filter_from")
+        filter_date_from = st.date_input("From date", value=None, key="inv_filter_from", format="DD/MM/YYYY")
     with fcol2:
-        filter_date_to = st.date_input("To date", value=None, key="inv_filter_to")
+        filter_date_to = st.date_input("To date", value=None, key="inv_filter_to", format="DD/MM/YYYY")
     with fcol3:
         filter_client_label = st.selectbox("Client", options=list(client_filter_options.keys()), key="inv_filter_client")
     with fcol4:
@@ -535,7 +551,7 @@ with tab_invoices:
 
     filter_parts = []
     if filter_date_from or filter_date_to:
-        filter_parts.append(f"Dates: {filter_date_from or 'any'} to {filter_date_to or 'any'}")
+        filter_parts.append(f"Dates: {fmt_date(filter_date_from) if filter_date_from else 'any'} to {fmt_date(filter_date_to) if filter_date_to else 'any'}")
     if filter_client_label != "All clients":
         filter_parts.append(f"Client: {filter_client_label}")
     if filter_status != "All":
@@ -568,7 +584,7 @@ with tab_invoices:
 VAT No: {company.get('vat_number') or 'Not set'}
 
 **Invoice #{inv['invoice_number']}**
-Date: {inv['issue_date']}
+Date: {fmt_date(inv['issue_date'])}
 Bill to: {client['name']}
 
 ---
@@ -633,9 +649,9 @@ with tab_quotes:
 
     qfcol1, qfcol2, qfcol3 = st.columns(3)
     with qfcol1:
-        q_filter_date_from = st.date_input("From date", value=None, key="quote_filter_from")
+        q_filter_date_from = st.date_input("From date", value=None, key="quote_filter_from", format="DD/MM/YYYY")
     with qfcol2:
-        q_filter_date_to = st.date_input("To date", value=None, key="quote_filter_to")
+        q_filter_date_to = st.date_input("To date", value=None, key="quote_filter_to", format="DD/MM/YYYY")
     with qfcol3:
         q_filter_client_label = st.selectbox("Client", options=list(q_client_filter_options.keys()), key="quote_filter_client")
 
@@ -652,7 +668,7 @@ with tab_quotes:
 
     q_filter_parts = []
     if q_filter_date_from or q_filter_date_to:
-        q_filter_parts.append(f"Dates: {q_filter_date_from or 'any'} to {q_filter_date_to or 'any'}")
+        q_filter_parts.append(f"Dates: {fmt_date(q_filter_date_from) if q_filter_date_from else 'any'} to {fmt_date(q_filter_date_to) if q_filter_date_to else 'any'}")
     if q_filter_client_label != "All clients":
         q_filter_parts.append(f"Client: {q_filter_client_label}")
     q_filter_description = " | ".join(q_filter_parts) if q_filter_parts else "All quotes, no filters applied"
@@ -683,7 +699,7 @@ with tab_quotes:
 **{company['name']}**
 
 **Quote #{q['quote_number']}**
-Date: {q['issue_date']}
+Date: {fmt_date(q['issue_date'])}
 For: {client['name']}
 Skip size: {size_label}
 
@@ -723,13 +739,13 @@ with tab_history:
         for r in rentals:
             skip_number = r["skips"]["skip_number"] if r["skips"] else "?"
             status = "Returned" if r["end_date"] else "Active"
-            st.write(f"Skip {skip_number} — {r['start_date']} to {r['end_date'] or 'present'} — {status} — {r['payment_status']}")
+            st.write(f"Skip {skip_number} — {fmt_date(r['start_date'])} to {fmt_date(r['end_date']) if r['end_date'] else 'present'} — {status} — {r['payment_status']}")
 
         st.markdown("### Invoices & Balance")
         invoices = supabase.table("invoices").select("*").eq("company_id", company_id).eq("client_id", client_id).order("issue_date", desc=True).execute().data
         total_owed = 0.0
         for inv in invoices:
-            st.write(f"Invoice #{inv['invoice_number']} — {inv['issue_date']} — €{inv['total_amount']:.2f} — {inv['status']}")
+            st.write(f"Invoice #{inv['invoice_number']} — {fmt_date(inv['issue_date'])} — €{inv['total_amount']:.2f} — {inv['status']}")
             if inv["status"] != "Paid":
                 total_owed += float(inv["total_amount"])
 

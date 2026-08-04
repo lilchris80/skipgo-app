@@ -1,5 +1,6 @@
 import csv
 import io
+from datetime import date
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
@@ -8,6 +9,21 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 BRAND_GREEN = colors.HexColor("#035B2B")
 BRAND_GREEN_LIGHT = colors.HexColor("#E8F5EC")
+
+
+def fmt_date(value):
+    """
+    Converts a date (ISO string or real date object) into DD/MM/YYYY
+    for display. Anything that isn't a real date is returned unchanged.
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value)
+        except ValueError:
+            return value
+    return value.strftime("%d/%m/%Y")
 
 
 def build_invoices_csv(invoices):
@@ -21,7 +37,7 @@ def build_invoices_csv(invoices):
         client_name = inv["clients"]["name"] if inv.get("clients") else "Unknown"
         writer.writerow([
             inv["invoice_number"],
-            inv["issue_date"],
+            fmt_date(inv["issue_date"]),
             client_name,
             f"{float(inv['subtotal']):.2f}",
             f"{float(inv['vat_amount']):.2f}",
@@ -42,7 +58,7 @@ def build_quotes_csv(quotes):
         size_label = q["skip_types"]["size_label"] if q.get("skip_types") else "?"
         writer.writerow([
             q["quote_number"],
-            q.get("issue_date", ""),
+            fmt_date(q.get("issue_date", "")),
             client_name,
             size_label,
             f"{float(q['quoted_price']):.2f}",
@@ -103,7 +119,7 @@ def generate_invoice_report_pdf(company, invoices, filter_description=""):
     for inv in invoices:
         client_name = inv["clients"]["name"] if inv.get("clients") else "Unknown"
         rows.append([
-            str(inv["invoice_number"]), inv["issue_date"], client_name,
+            str(inv["invoice_number"]), fmt_date(inv["issue_date"]), client_name,
             f"EUR {float(inv['total_amount']):.2f}", inv["status"]
         ])
         grand_total += float(inv["total_amount"])
@@ -121,7 +137,7 @@ def generate_quote_report_pdf(company, quotes, filter_description=""):
         client_name = q["clients"]["name"] if q.get("clients") else "Unknown"
         size_label = q["skip_types"]["size_label"] if q.get("skip_types") else "?"
         rows.append([
-            str(q["quote_number"]), q.get("issue_date", ""), client_name,
+            str(q["quote_number"]), fmt_date(q.get("issue_date", "")), client_name,
             size_label, f"EUR {float(q['quoted_price']):.2f}", q["status"]
         ])
         grand_total += float(q["quoted_price"])
