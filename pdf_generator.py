@@ -1,4 +1,5 @@
 import os
+from datetime import date
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -23,6 +24,22 @@ BRAND_GREEN_LIGHT = colors.HexColor("#E8F5EC")
 DEFAULT_PHONE = "77000006"
 DEFAULT_EMAIL = "cyglobalimports@gmail.com"
 DEFAULT_SERVICE_AREA = "Nicosia"
+
+
+def fmt_date(value):
+    """
+    Converts a date (ISO string like '2026-08-03', or a real date object)
+    into DD/MM/YYYY for display. Anything that isn't a real date (None,
+    '?', 'still out', etc.) is returned unchanged.
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value)
+        except ValueError:
+            return value
+    return value.strftime("%d/%m/%Y")
 
 
 def _get_logo_image():
@@ -142,9 +159,9 @@ def _draw_rental_period(c, x, y, rental, invoice):
     delivery = rental.get("start_date", "?") if rental else "?"
     pickup = rental.get("end_date") if rental else None
     if pickup:
-        c.drawString(x, y, f"Delivery: {delivery}    Pickup: {pickup}")
+        c.drawString(x, y, f"Delivery: {fmt_date(delivery)}    Pickup: {fmt_date(pickup)}")
     else:
-        c.drawString(x, y, f"Delivery: {delivery}    Pickup: still out at time of invoicing")
+        c.drawString(x, y, f"Delivery: {fmt_date(delivery)}    Pickup: still out at time of invoicing")
     y -= 5.5 * mm
 
     c.drawString(x, y, f"Total days rented: {invoice['days_out']}")
@@ -188,7 +205,7 @@ def generate_invoice_pdf(company, invoice, client, line_items, rental=None):
 
     c.setFillColor(colors.black)
     c.setFont("Helvetica", 10)
-    c.drawString(15 * mm, y, f"Date: {invoice['issue_date']}")
+    c.drawString(15 * mm, y, f"Date: {fmt_date(invoice['issue_date'])}")
     y -= 10 * mm
 
     y = _draw_bill_to(c, client, 15 * mm, y)
@@ -284,7 +301,7 @@ def generate_quote_pdf(company, quote, client, size_label):
 
     c.setFont("Helvetica", 10)
     c.setFillColor(colors.black)
-    c.drawString(15 * mm, y, f"Date: {quote.get('issue_date', '')}")
+    c.drawString(15 * mm, y, f"Date: {fmt_date(quote.get('issue_date', ''))}")
     y -= 10 * mm
 
     y = _draw_bill_to(c, client, 15 * mm, y)
@@ -317,4 +334,3 @@ def generate_quote_pdf(company, quote, client, size_label):
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
-    # rebuild trigger
