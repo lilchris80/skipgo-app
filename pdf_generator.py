@@ -323,7 +323,16 @@ def generate_quote_pdf(company, quote, client, size_label):
     ]))
     table_width, table_height = table.wrap(0, 0)
     table.drawOn(c, 15 * mm, y - table_height)
-    y = y - table_height - 10 * mm
+    y = y - table_height - 8 * mm
+
+    if quote.get("free_days") is not None:
+        c.setFont("Helvetica", 9.5)
+        c.setFillColor(colors.black)
+        c.drawString(
+            15 * mm, y,
+            f"Includes up to {quote['free_days']} days. After that: EUR {float(quote['weekly_late_rate']):.2f}/week until returned."
+        )
+        y -= 6 * mm
 
     c.setFont("Helvetica-Oblique", 9)
     c.setFillColor(colors.grey)

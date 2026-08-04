@@ -628,6 +628,19 @@ with tab_quotes:
             min_value=0.0, value=float(chosen_type["gross_price"]), step=5.0
         )
 
+        st.caption("These terms show on the quote so the client knows the rules up front. Pre-filled from your standard rules, but editable for this specific quote if needed.")
+        qterm_col1, qterm_col2 = st.columns(2)
+        with qterm_col1:
+            quote_free_days = st.number_input(
+                "Free days included", min_value=0,
+                value=int(company["settings"].get("free_days", 30)), step=1, key="quote_free_days"
+            )
+        with qterm_col2:
+            quote_weekly_rate = st.number_input(
+                "Weekly late fee after that (€)", min_value=0.0,
+                value=float(company["settings"].get("weekly_late_rate", 50.0)), step=5.0, key="quote_weekly_rate"
+            )
+
         if st.button("Create Quote", type="primary"):
             quote_number = supabase.rpc("get_next_quote_number", {"p_company_id": company_id}).execute().data
             supabase.table("quotes").insert({
@@ -636,6 +649,8 @@ with tab_quotes:
                 "client_id": client_options[chosen_client],
                 "skip_type_id": chosen_type["id"],
                 "quoted_price": quoted_price,
+                "free_days": quote_free_days,
+                "weekly_late_rate": quote_weekly_rate,
                 "status": "Pending"
             }).execute()
             st.success(f"Quote #{quote_number} created.")
@@ -704,6 +719,7 @@ For: {client['name']}
 Skip size: {size_label}
 
 **Quoted price: €{q['quoted_price']:.2f}** (VAT included)
+{f"Includes up to {q['free_days']} days. After that: €{float(q['weekly_late_rate']):.2f}/week until returned." if q.get('free_days') is not None else ""}
             """)
 
             pdf_bytes = generate_quote_pdf(company, q, client, size_label)
