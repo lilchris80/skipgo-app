@@ -258,7 +258,7 @@ with tab_rentals:
         "*, clients(name, phone), skips(skip_number)"
     ).eq("company_id", company_id).is_("end_date", "null").execute().data
 
-    available_skips_for_swap = supabase.table("skips").select("*").eq("company_id", company_id).eq("status", "available").execute().data
+    available_skips_for_swap = supabase.table("skips").select("*, skip_types(size_label, gross_price)").eq("company_id", company_id).eq("status", "available").execute().data
 
     if not rentals:
         st.info("No active rentals.")
@@ -297,7 +297,10 @@ with tab_rentals:
                 if not available_skips_for_swap:
                     st.warning("No other available skips to swap to.")
                 else:
-                    swap_options = {s["skip_number"]: s["id"] for s in available_skips_for_swap}
+                    swap_options = {
+                        f"Skip {s['skip_number']} — {s['skip_types']['size_label'] if s.get('skip_types') else 'size not set'}": s["id"]
+                        for s in available_skips_for_swap
+                    }
                     chosen_swap = st.selectbox("New skip", options=list(swap_options.keys()), key=f"swap_select_{r['id']}")
                     if st.button("Confirm Swap", key=f"swap_confirm_{r['id']}", type="primary"):
                         old_skip_id = r["skip_id"]
@@ -319,7 +322,7 @@ with tab_rentals:
                         supabase.table("skips").update({"status": "rented"}).eq("id", new_skip_id).execute()
 
                         st.session_state[f"swapping_{r['id']}"] = False
-                        st.success(f"Swapped to Skip {chosen_swap} for {client_name}.")
+                        st.success(f"Swapped to {chosen_swap} for {client_name}.")
                         st.rerun()
 
 # ----------------------------------------------------------------
@@ -456,9 +459,12 @@ with tab_invoices:
     }
     uninvoiced = [r for r in all_rentals if r["id"] not in invoiced_rental_ids]
 
-    if not uninvoiced:
-        st.info("No rentals waiting to be invoiced.")
+    if uninvoiced:
+        st.warning(f"⚠️ {len(uninvoiced)} rental(s) are waiting to be invoiced.")
     else:
+        st.success("✅ Every rental has been invoiced.")
+
+    if uninvoiced:
         rental_labels = {
             f"Skip {r['skips']['skip_number']} — {r['clients']['name']} — started {fmt_date(r['start_date'])}": r
             for r in uninvoiced
