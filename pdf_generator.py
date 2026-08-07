@@ -46,6 +46,8 @@ def _get_logo_image():
     return ImageReader(LOGO_PATH)
 
 
+
+
 def _draw_header(c, company, doc_title, doc_number, page_width, page_height):
     """
     Draws the logo, business details, and coloured title banner at the
@@ -342,6 +344,110 @@ def generate_quote_pdf(company, quote, client, size_label):
     c.setFont("Helvetica-Oblique", 9)
     c.setFillColor(colors.grey)
     c.drawString(15 * mm, y, "This quote is valid for 14 days from the date above.")
+
+    _draw_footer(c, page_width)
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def _wrap_text(text, max_chars=95):
+    """Simple word-wrap for freeform text (like a credit note reason) so
+    it fits within the page width instead of running off the edge."""
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        if len(current) + len(word) + 1 <= max_chars:
+            current = f"{current} {word}".strip()
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def generate_credit_note_pdf(company, credit_note, client, original_invoice_number):
+    """
+    Builds a branded PDF credit note. Cyprus VAT record-keeping rules
+    require a credit note to clearly show the words "CREDIT NOTE",
+    reference the original invoice it corrects, and state the reason
+    it was issued - all three are included below.
+
+    company:      dict from the 'companies' table
+    credit_note:  dict from the 'credit_notes' table (credit_note_number,
+                  issue_date, subtotal, vat_rate, vat_amount, total_amount, reason)
+    client:       dict from the 'clients' table
+    original_invoice_number: the invoice number this credit note corrects
+    """
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    page_width, page_height = A4
+
+    y = _draw_header(
+        c, company, "CREDIT NOTE", f"Credit Note #{credit_note['credit_note_number']}",
+        page_width, page_height
+    )
+
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica", 10)
+    c.drawString(15 * mm, y, f"Date: {fmt_date(credit_note['issue_date'])}")
+    y -= 6 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(15 * mm, y, f"Relates to: Invoice #{original_invoice_number}")
+    y -= 10 * mm
+
+    y = _draw_bill_to(c, client, 15 * mm, y)
+
+    # Reason - required by Cyprus VAT rules for a valid credit note
+    c.setFont("Helvetica-Bold", 10)
+    c.setFillColor(colors.black)
+    c.drawString(15 * mm, y, "Reason:")
+    y -= 5.5 * mm
+    c.setFont("Helvetica", 10)
+    for line in _wrap_text(credit_note.get("reason", ""), max_chars=95):
+        c.drawString(15 * mm, y, line)
+        y -= 5 * mm
+    y -= 6 * mm
+
+    table_data = [["Description", "Amount"]]
+    table_data.append([
+        f"Credit against Invoice #{original_invoice_number}",
+        f"-EUR {float(credit_note['total_amount']):.2f}"
+    ])
+
+    table = Table(table_data, colWidths=[110 * mm, 65 * mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#B34700")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    table_width, table_height = table.wrap(0, 0)
+    table.drawOn(c, 15 * mm, y - table_height)
+    y = y - table_height - 8 * mm
+
+    totals_x_label = page_width - 90 * mm
+    totals_x_value = page_width - 15 * mm
+    c.setFont("Helvetica", 10)
+    c.setFillColor(colors.black)
+    c.drawString(totals_x_label, y, "Net amount:")
+    c.drawRightString(totals_x_value, y, f"-EUR {float(credit_note['subtotal']):.2f}")
+    y -= 6 * mm
+    c.drawString(totals_x_label, y, f"VAT ({credit_note['vat_rate']}%):")
+    c.drawRightString(totals_x_value, y, f"-EUR {float(credit_note['vat_amount']):.2f}")
+    y -= 7 * mm
+    c.setFont("Helvetica-Bold", 12)
+    c.setFillColor(colors.HexColor("#B34700"))
+    c.drawString(totals_x_label, y, "Total Credited:")
+    c.drawRightString(totals_x_value, y, f"-EUR {float(credit_note['total_amount']):.2f}")
 
     _draw_footer(c, page_width)
     c.showPage()
