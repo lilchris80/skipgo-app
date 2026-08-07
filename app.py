@@ -23,12 +23,14 @@ except ImportError:
 
 def _safe_archive(pdf_bytes, doc_type, ref, client_name, issued_on_str):
     if archive_invoice is None:
+        print(f"ARCHIVE_DEBUG: module not available, skipped for {ref}", flush=True)
         return
     try:
         issued_on = date.fromisoformat(issued_on_str) if issued_on_str else date.today()
-        archive_invoice(pdf_bytes, "skipgo", ref, client_name, issued_on, doc_type=doc_type)
-    except Exception:
-        pass
+        result = archive_invoice(pdf_bytes, "skipgo", ref, client_name, issued_on, doc_type=doc_type)
+        print(f"ARCHIVE_DEBUG: {ref} -> success={result}", flush=True)
+    except Exception as exc:
+        print(f"ARCHIVE_DEBUG: {ref} -> EXCEPTION: {exc}", flush=True)
 
 def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_rate, free_days, grace_days=0):
     """
