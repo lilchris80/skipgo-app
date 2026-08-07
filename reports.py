@@ -231,3 +231,46 @@ def generate_client_statement_pdf(company, client, period_invoices, period_credi
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def build_credit_notes_csv(credit_notes):
+    """Builds a CSV file (as text) from a list of credit note dicts.
+    Uses semicolons as the separator, same as invoices/quotes."""
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["Credit Note #", "Date", "Client", "Invoice #", "Net (EUR)", "VAT (EUR)", "Total (EUR)", "Reason"])
+    for cn in credit_notes:
+        client_name = cn["clients"]["name"] if cn.get("clients") else "Unknown"
+        invoice_number = cn["invoices"]["invoice_number"] if cn.get("invoices") else "?"
+        writer.writerow([
+            cn["credit_note_number"],
+            fmt_date(cn["issue_date"]),
+            client_name,
+            invoice_number,
+            f"{float(cn['subtotal']):.2f}",
+            f"{float(cn['vat_amount']):.2f}",
+            f"{float(cn['total_amount']):.2f}",
+            cn.get("reason", ""),
+        ])
+    return output.getvalue()
+
+
+def generate_credit_note_report_pdf(company, credit_notes, filter_description=""):
+    rows = []
+    grand_total = 0.0
+    for cn in credit_notes:
+        client_name = cn["clients"]["name"] if cn.get("clients") else "Unknown"
+        invoice_number = cn["invoices"]["invoice_number"] if cn.get("invoices") else "?"
+        reason = cn.get("reason", "")
+        if len(reason) > 40:
+            reason = reason[:37] + "..."
+        rows.append([
+            str(cn["credit_note_number"]), fmt_date(cn["issue_date"]), client_name,
+            f"Inv #{invoice_number}", f"EUR {float(cn['total_amount']):.2f}", reason
+        ])
+        grand_total += float(cn["total_amount"])
+    return _build_report_pdf(
+        "Credit Note Report", company,
+        ["CN #", "Date", "Client", "Invoice", "Amount", "Reason"],
+        rows, "Grand Total Credited", grand_total, filter_description
+    )
