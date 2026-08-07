@@ -146,3 +146,88 @@ def generate_quote_report_pdf(company, quotes, filter_description=""):
         ["Quote #", "Date", "Client", "Size", "Price", "Status"],
         rows, "Grand Total", grand_total, filter_description
     )
+
+
+def generate_client_statement_pdf(company, client, period_invoices, period_credit_notes,
+                                    date_from, date_to, current_balance):
+    """
+    Builds a "Statement of Account" PDF for one client - a proper document
+    to actually send them. Shows every invoice and credit note issued
+    within the chosen date range, plus the client's current overall
+    outstanding balance (which reflects ALL unpaid invoices and credit
+    notes, not just ones inside the period - the period tables are for
+    record-keeping, the balance is always the real, current figure).
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        topMargin=20 * mm, bottomMargin=20 * mm, leftMargin=15 * mm, rightMargin=15 * mm
+    )
+    styles = getSampleStyleSheet()
+    elements = []
+
+    elements.append(Paragraph(f"<b>{company.get('name', 'SkipGO')}</b>", styles["Title"]))
+    elements.append(Paragraph("Statement of Account", styles["Heading2"]))
+    period_text = f"Period: {fmt_date(date_from) if date_from else 'Beginning'} to {fmt_date(date_to) if date_to else 'Today'}"
+    elements.append(Paragraph(period_text, styles["Normal"]))
+    elements.append(Paragraph(f"Client: {client.get('name', 'Unknown')}", styles["Normal"]))
+    if client.get("address"):
+        elements.append(Paragraph(client["address"], styles["Normal"]))
+    elements.append(Spacer(1, 8 * mm))
+
+    elements.append(Paragraph("<b>Invoices in this period</b>", styles["Heading3"]))
+    if period_invoices:
+        inv_data = [["Invoice #", "Date", "Amount", "Status"]]
+        for inv in period_invoices:
+            inv_data.append([
+                str(inv["invoice_number"]), fmt_date(inv["issue_date"]),
+                f"EUR {float(inv['total_amount']):.2f}", inv["status"]
+            ])
+        inv_table = Table(inv_data, colWidths=[35 * mm, 35 * mm, 45 * mm, 35 * mm], repeatRows=1)
+        inv_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), BRAND_GREEN),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(inv_table)
+    else:
+        elements.append(Paragraph("No invoices in this period.", styles["Normal"]))
+    elements.append(Spacer(1, 6 * mm))
+
+    elements.append(Paragraph("<b>Credit notes in this period</b>", styles["Heading3"]))
+    if period_credit_notes:
+        cn_data = [["Credit Note #", "Date", "Amount", "Reason"]]
+        for cn in period_credit_notes:
+            reason = cn.get("reason", "")
+            if len(reason) > 55:
+                reason = reason[:52] + "..."
+            cn_data.append([
+                str(cn["credit_note_number"]), fmt_date(cn["issue_date"]),
+                f"-EUR {float(cn['total_amount']):.2f}", reason
+            ])
+        cn_table = Table(cn_data, colWidths=[30 * mm, 30 * mm, 35 * mm, 85 * mm], repeatRows=1)
+        cn_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#B34700")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(cn_table)
+    else:
+        elements.append(Paragraph("No credit notes in this period.", styles["Normal"]))
+    elements.append(Spacer(1, 10 * mm))
+
+    elements.append(Paragraph(f"<b>Current Outstanding Balance: EUR {current_balance:.2f}</b>", styles["Heading2"]))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
