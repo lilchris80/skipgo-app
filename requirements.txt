@@ -3,3 +3,4 @@ supabase
 reportlab
 streamlit-cookies-controller
 starlette==1.3.1
+boto3
