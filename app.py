@@ -196,10 +196,46 @@ if not st.session_state.user:
 company = st.session_state.company
 company_id = company["id"]
 
+def show_center_popup(message):
+    """
+    Shows a centered, blue confirmation pop-up (like the ones used in
+    Hylates) instead of Streamlit's default corner toast. It's rendered
+    via a small piece of JavaScript that attaches directly to the main
+    page (not just the small embedded frame this code runs in), so it
+    appears centered on the whole screen, then fades out on its own.
+    """
+    html = f"""
+    <script>
+    (function() {{
+        var popup = window.parent.document.createElement('div');
+        popup.innerText = "✅ {message}";
+        popup.style.position = "fixed";
+        popup.style.top = "50%";
+        popup.style.left = "50%";
+        popup.style.transform = "translate(-50%, -50%)";
+        popup.style.backgroundColor = "#1565C0";
+        popup.style.color = "white";
+        popup.style.padding = "16px 28px";
+        popup.style.borderRadius = "10px";
+        popup.style.fontSize = "16px";
+        popup.style.fontWeight = "600";
+        popup.style.fontFamily = "sans-serif";
+        popup.style.boxShadow = "0 4px 20px rgba(0,0,0,0.3)";
+        popup.style.zIndex = "999999";
+        popup.style.opacity = "1";
+        popup.style.transition = "opacity 0.5s ease";
+        window.parent.document.body.appendChild(popup);
+        setTimeout(function() {{ popup.style.opacity = "0"; }}, 1800);
+        setTimeout(function() {{ popup.remove(); }}, 2300);
+    }})();
+    </script>
+    """
+    components.html(html, height=0, width=0)
+
 # Show a brief pop-up confirmation for whatever action just happened
 # (e.g. "Invoice created"), if one was queued right before this page load.
 if st.session_state.get("toast_message"):
-    st.toast(st.session_state["toast_message"], icon="✅")
+    show_center_popup(st.session_state["toast_message"])
     del st.session_state["toast_message"]
 
 st.markdown(
