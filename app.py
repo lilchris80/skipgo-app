@@ -196,6 +196,12 @@ if not st.session_state.user:
 company = st.session_state.company
 company_id = company["id"]
 
+# Show a brief pop-up confirmation for whatever action just happened
+# (e.g. "Invoice created"), if one was queued right before this page load.
+if st.session_state.get("toast_message"):
+    st.toast(st.session_state["toast_message"], icon="✅")
+    del st.session_state["toast_message"]
+
 st.markdown(
     f"""
     <div style='display: flex; align-items: center; gap: 14px; padding: 6px 0 10px 0;'>
@@ -246,7 +252,7 @@ with tab_skips:
                     "skip_type_id": size_options[chosen_size],
                     "status": "available"
                 }).execute()
-                st.success("Skip added.")
+                st.session_state.toast_message = "Skip added."
                 st.rerun()
 
 # ----------------------------------------------------------------
@@ -280,11 +286,13 @@ with tab_rentals:
                 if st.button("Mark Returned", key=f"return_{r['id']}"):
                     supabase.table("rentals").update({"end_date": str(date.today())}).eq("id", r["id"]).execute()
                     supabase.table("skips").update({"status": "available"}).eq("id", r["skip_id"]).execute()
+                    st.session_state.toast_message = f"Skip {skip_number} marked as returned."
                     st.rerun()
             with col2:
                 if r["payment_status"] != "Paid":
                     if st.button("Mark Paid", key=f"paid_{r['id']}"):
                         supabase.table("rentals").update({"payment_status": "Paid"}).eq("id", r["id"]).execute()
+                        st.session_state.toast_message = "Marked as paid."
                         st.rerun()
                 else:
                     st.write("✅ Paid")
@@ -322,7 +330,7 @@ with tab_rentals:
                         supabase.table("skips").update({"status": "rented"}).eq("id", new_skip_id).execute()
 
                         st.session_state[f"swapping_{r['id']}"] = False
-                        st.success(f"Swapped to {chosen_swap} for {client_name}.")
+                        st.session_state.toast_message = f"Swapped to {chosen_swap} for {client_name}."
                         st.rerun()
 
 # ----------------------------------------------------------------
@@ -330,18 +338,6 @@ with tab_rentals:
 # ----------------------------------------------------------------
 with tab_new_rental:
     st.subheader("Create a New Rental")
-
-    if "last_rental_created" in st.session_state:
-        info = st.session_state.last_rental_created
-        st.success(
-            f"✅ Rental created — Skip {info['skip']} for {info['client']}\n\n"
-            f"Delivery: {fmt_date(info['delivery'])} • Estimated pickup: {fmt_date(info['pickup'])}\n\n"
-            f"Base price: €{info['base_price']:.2f}"
-        )
-        if st.button("Dismiss"):
-            del st.session_state.last_rental_created
-            st.rerun()
-        st.divider()
 
     clients = supabase.table("clients").select("*").eq("company_id", company_id).execute().data
     available_skips = supabase.table("skips").select("*, skip_types(size_label, gross_price, weekly_late_rate)").eq("company_id", company_id).eq("status", "available").execute().data
@@ -401,13 +397,7 @@ with tab_new_rental:
                 "created_at": "now()"
             }).execute()
             supabase.table("skips").update({"status": "rented"}).eq("id", selected_skip_id).execute()
-            st.session_state.last_rental_created = {
-                "skip": chosen_skip_number,
-                "client": chosen_client,
-                "delivery": str(delivery_date),
-                "pickup": str(estimated_pickup) if estimated_pickup else "Not set",
-                "base_price": base_price
-            }
+            st.session_state.toast_message = f"Rental created — Skip {chosen_skip_number} for {chosen_client}."
             st.session_state.rental_form_key = form_key + 1
             st.rerun()
 
@@ -437,7 +427,7 @@ with tab_clients:
                     "phone": phone,
                     "address": address
                 }).execute()
-                st.success("Client added.")
+                st.session_state.toast_message = "Client added."
                 st.rerun()
 
 # ----------------------------------------------------------------
@@ -522,7 +512,7 @@ with tab_invoices:
                 "line_total": round(final_amount, 2)
             }).execute()
 
-            st.success(f"Invoice #{invoice_number} created.")
+            st.session_state.toast_message = f"Invoice #{invoice_number} created."
             st.rerun()
 
     st.divider()
@@ -608,6 +598,7 @@ VAT ({inv['vat_rate']}%): €{inv['vat_amount']:.2f}
             if inv["status"] != "Paid":
                 if st.button("Mark Paid", key=f"inv_paid_{inv['id']}"):
                     supabase.table("invoices").update({"status": "Paid"}).eq("id", inv["id"]).execute()
+                    st.session_state.toast_message = f"Invoice #{inv['invoice_number']} marked as paid."
                     st.rerun()
 
 # ----------------------------------------------------------------
@@ -659,7 +650,7 @@ with tab_quotes:
                 "weekly_late_rate": quote_weekly_rate,
                 "status": "Pending"
             }).execute()
-            st.success(f"Quote #{quote_number} created.")
+            st.session_state.toast_message = f"Quote #{quote_number} created."
             st.rerun()
 
     st.divider()
@@ -737,10 +728,12 @@ Skip size: {size_label}
                 with col1:
                     if st.button("Mark Accepted", key=f"quote_accept_{q['id']}"):
                         supabase.table("quotes").update({"status": "Accepted"}).eq("id", q["id"]).execute()
+                        st.session_state.toast_message = f"Quote #{q['quote_number']} marked as accepted."
                         st.rerun()
                 with col2:
                     if st.button("Mark Expired", key=f"quote_expire_{q['id']}"):
                         supabase.table("quotes").update({"status": "Expired"}).eq("id", q["id"]).execute()
+                        st.session_state.toast_message = f"Quote #{q['quote_number']} marked as expired."
                         st.rerun()
 
 # ----------------------------------------------------------------
@@ -803,7 +796,7 @@ with tab_settings:
             new_settings["weekly_late_rate"] = float(weekly_rate_input)
             supabase.table("companies").update({"settings": new_settings}).eq("id", company_id).execute()
             st.session_state.company["settings"] = new_settings
-            st.success("Rules updated.")
+            st.session_state.toast_message = "Rules updated."
             st.rerun()
 
     st.divider()
@@ -826,7 +819,7 @@ with tab_settings:
                     "gross_price": new_price,
                     "weekly_late_rate": new_rate
                 }).eq("id", t["id"]).execute()
-                st.success(f"Updated {new_label}.")
+                st.session_state.toast_message = f"Updated {new_label}."
                 st.rerun()
 
     st.divider()
@@ -845,7 +838,7 @@ with tab_settings:
                     "gross_price": new_type_price,
                     "weekly_late_rate": new_type_rate
                 }).execute()
-                st.success("Skip type added.")
+                st.session_state.toast_message = "Skip type added."
                 st.rerun()
 
 # ----------------------------------------------------------------
