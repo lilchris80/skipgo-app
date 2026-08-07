@@ -7,7 +7,7 @@ import uuid
 import sys
 import streamlit.components.v1 as components
 from pdf_generator import generate_invoice_pdf, generate_quote_pdf, generate_credit_note_pdf
-from reports import build_invoices_csv, build_quotes_csv, generate_invoice_report_pdf, generate_quote_report_pdf, generate_client_statement_pdf
+from reports import build_invoices_csv, build_quotes_csv, generate_invoice_report_pdf, generate_quote_report_pdf, generate_client_statement_pdf, build_credit_notes_csv, generate_credit_note_report_pdf
 from streamlit_cookies_controller import CookieController
 
 # Optional: backs up every invoice/quote PDF to two off-site cloud storage
@@ -747,7 +747,30 @@ with tab_credit_notes:
         cn_query = cn_query.eq("client_id", cn_client_filter_options[cn_filter_client])
     credit_notes_list = cn_query.order("credit_note_number", desc=True).execute().data
 
-    st.caption(f"Showing {len(credit_notes_list)} credit note(s).")
+    cn_filter_parts = []
+    if cn_filter_from or cn_filter_to:
+        cn_filter_parts.append(f"Dates: {fmt_date(cn_filter_from) if cn_filter_from else 'any'} to {fmt_date(cn_filter_to) if cn_filter_to else 'any'}")
+    if cn_filter_client != "All clients":
+        cn_filter_parts.append(f"Client: {cn_filter_client}")
+    cn_filter_description = " | ".join(cn_filter_parts) if cn_filter_parts else "All credit notes, no filters applied"
+
+    st.caption(f"Showing {len(credit_notes_list)} credit note(s). {cn_filter_description}")
+
+    cndl_col1, cndl_col2 = st.columns(2)
+    with cndl_col1:
+        st.download_button(
+            "📊 Download CSV",
+            data=build_credit_notes_csv(credit_notes_list),
+            file_name="credit_notes_report.csv",
+            mime="text/csv",
+            key="cn_csv_dl",
+            disabled=len(credit_notes_list) == 0
+        )
+    with cndl_col2:
+        if credit_notes_list:
+            pdf_view_button("📄 Open PDF Report", generate_credit_note_report_pdf(company, credit_notes_list, cn_filter_description))
+        else:
+            st.button("📄 Open PDF Report", disabled=True, key="cn_pdf_report_disabled")
 
     for cn in credit_notes_list:
         cn_client = cn["clients"] or {"name": "Unknown client"}
