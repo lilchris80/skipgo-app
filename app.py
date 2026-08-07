@@ -6,8 +6,8 @@ import base64
 import uuid
 import sys
 import streamlit.components.v1 as components
-from pdf_generator import generate_invoice_pdf, generate_quote_pdf
-from reports import build_invoices_csv, build_quotes_csv, generate_invoice_report_pdf, generate_quote_report_pdf
+from pdf_generator import generate_invoice_pdf, generate_quote_pdf, generate_credit_note_pdf
+from reports import build_invoices_csv, build_quotes_csv, generate_invoice_report_pdf, generate_quote_report_pdf, generate_client_statement_pdf
 from streamlit_cookies_controller import CookieController
 
 # Optional: backs up every invoice/quote PDF to two off-site cloud storage
@@ -275,8 +275,8 @@ st.markdown(
 if st.button("Log out"):
     logout()
 
-tab_skips, tab_rentals, tab_new_rental, tab_clients, tab_invoices, tab_quotes, tab_history, tab_settings = st.tabs(
-    ["Skips", "Active Rentals", "New Rental", "Clients", "Invoices", "Quotes", "Client History", "Settings"]
+tab_skips, tab_rentals, tab_new_rental, tab_clients, tab_invoices, tab_credit_notes, tab_quotes, tab_history, tab_settings = st.tabs(
+    ["Skips", "Active Rentals", "New Rental", "Clients", "Invoices", "Credit Notes", "Quotes", "Client History", "Settings"]
 )
 
 # ----------------------------------------------------------------
@@ -662,6 +662,114 @@ VAT ({inv['vat_rate']}%): €{inv['vat_amount']:.2f}
                     st.rerun()
 
 # ----------------------------------------------------------------
+# TAB: CREDIT NOTES
+# ----------------------------------------------------------------
+with tab_credit_notes:
+    st.subheader("Issue a Credit Note")
+    st.caption("Used to cancel or reduce a previously issued invoice. Cyprus VAT rules require a reason to be stated.")
+
+    all_invoices_for_credit = supabase.table("invoices").select(
+        "*, clients(name, address, phone), rentals(skips(skip_number))"
+    ).eq("company_id", company_id).order("invoice_number", desc=True).execute().data
+
+    if not all_invoices_for_credit:
+        st.info("No invoices exist yet to issue a credit note against.")
+    else:
+        def _invoice_skip_label(inv):
+            rentals_info = inv.get("rentals")
+            if rentals_info and rentals_info.get("skips"):
+                return f"Skip {rentals_info['skips']['skip_number']}"
+            return "Skip ?"
+
+        cn_invoice_labels = {
+            f"Invoice #{inv['invoice_number']} — {inv['clients']['name'] if inv['clients'] else 'Unknown'} — {_invoice_skip_label(inv)} — €{inv['total_amount']:.2f}": inv
+            for inv in all_invoices_for_credit
+        }
+        chosen_cn_label = st.selectbox("Select the invoice to credit", options=list(cn_invoice_labels.keys()))
+        selected_invoice = cn_invoice_labels[chosen_cn_label]
+
+        cn_amount = st.number_input(
+            "Amount to credit (€) — full or partial",
+            min_value=0.01, max_value=float(selected_invoice["total_amount"]),
+            value=float(selected_invoice["total_amount"]), step=5.0
+        )
+        cn_reason = st.text_area(
+            "Reason for this credit note (required)",
+            placeholder="e.g. Late fee waived, billing error, cancelled rental..."
+        )
+
+        if st.button("Issue Credit Note", type="primary"):
+            if not cn_reason.strip():
+                st.error("A reason is required for a valid credit note.")
+            else:
+                cn_vat_rate = 19.00
+                cn_net = cn_amount / (1 + cn_vat_rate / 100)
+                cn_vat = cn_amount - cn_net
+                cn_number = supabase.rpc("get_next_credit_note_number", {"p_company_id": company_id}).execute().data
+                supabase.table("credit_notes").insert({
+                    "company_id": company_id,
+                    "credit_note_number": cn_number,
+                    "invoice_id": selected_invoice["id"],
+                    "client_id": selected_invoice["client_id"],
+                    "issue_date": str(date.today()),
+                    "subtotal": round(cn_net, 2),
+                    "vat_rate": cn_vat_rate,
+                    "vat_amount": round(cn_vat, 2),
+                    "total_amount": round(cn_amount, 2),
+                    "reason": cn_reason.strip()
+                }).execute()
+                st.session_state.toast_message = f"Credit Note #{cn_number} issued."
+                st.rerun()
+
+    st.divider()
+    st.subheader("All Credit Notes")
+
+    cn_client_filter_options = {"All clients": None}
+    all_clients_for_cn_filter = supabase.table("clients").select("id, name").eq("company_id", company_id).execute().data
+    cn_client_filter_options.update({c["name"]: c["id"] for c in all_clients_for_cn_filter})
+
+    cnf1, cnf2, cnf3 = st.columns(3)
+    with cnf1:
+        cn_filter_from = st.date_input("From date", value=None, key="cn_filter_from", format="DD/MM/YYYY")
+    with cnf2:
+        cn_filter_to = st.date_input("To date", value=None, key="cn_filter_to", format="DD/MM/YYYY")
+    with cnf3:
+        cn_filter_client = st.selectbox("Client", options=list(cn_client_filter_options.keys()), key="cn_filter_client")
+
+    cn_query = supabase.table("credit_notes").select(
+        "*, clients(name, address, phone), invoices(invoice_number)"
+    ).eq("company_id", company_id)
+    if cn_filter_from:
+        cn_query = cn_query.gte("issue_date", str(cn_filter_from))
+    if cn_filter_to:
+        cn_query = cn_query.lte("issue_date", str(cn_filter_to))
+    if cn_client_filter_options[cn_filter_client] is not None:
+        cn_query = cn_query.eq("client_id", cn_client_filter_options[cn_filter_client])
+    credit_notes_list = cn_query.order("credit_note_number", desc=True).execute().data
+
+    st.caption(f"Showing {len(credit_notes_list)} credit note(s).")
+
+    for cn in credit_notes_list:
+        cn_client = cn["clients"] or {"name": "Unknown client"}
+        orig_inv_number = cn["invoices"]["invoice_number"] if cn.get("invoices") else "?"
+        with st.expander(f"Credit Note #{cn['credit_note_number']} — {cn_client['name']} — -€{cn['total_amount']:.2f} — vs Invoice #{orig_inv_number}"):
+            st.markdown(f"""
+**{company['name']}**
+
+**Credit Note #{cn['credit_note_number']}**
+Date: {fmt_date(cn['issue_date'])}
+Relates to: Invoice #{orig_inv_number}
+For: {cn_client['name']}
+
+**Reason:** {cn['reason']}
+
+**Total Credited: -€{cn['total_amount']:.2f}**
+            """)
+            cn_pdf_bytes = generate_credit_note_pdf(company, cn, cn_client, orig_inv_number)
+            _safe_archive(cn_pdf_bytes, "credit_notes", f"CN-{cn['credit_note_number']:04d}", cn_client["name"], cn["issue_date"])
+            pdf_view_button("📄 Open PDF", cn_pdf_bytes)
+
+# ----------------------------------------------------------------
 # TAB: QUOTES
 # ----------------------------------------------------------------
 with tab_quotes:
@@ -810,6 +918,7 @@ with tab_history:
         client_options = {c["name"]: c["id"] for c in clients}
         chosen_name = st.selectbox("Select a client", options=list(client_options.keys()))
         client_id = client_options[chosen_name]
+        selected_client_record = next((c for c in clients if c["id"] == client_id), {"name": chosen_name})
 
         st.markdown("### Rentals")
         rentals = supabase.table("rentals").select("*, skips(skip_number)").eq("company_id", company_id).eq("client_id", client_id).order("start_date", desc=True).execute().data
@@ -818,16 +927,51 @@ with tab_history:
             status = "Returned" if r["end_date"] else "Active"
             st.write(f"Skip {skip_number} — {fmt_date(r['start_date'])} to {fmt_date(r['end_date']) if r['end_date'] else 'present'} — {status} — {r['payment_status']}")
 
-        st.markdown("### Invoices & Balance")
-        invoices = supabase.table("invoices").select("*").eq("company_id", company_id).eq("client_id", client_id).order("issue_date", desc=True).execute().data
-        total_owed = 0.0
-        for inv in invoices:
+        st.markdown("### Invoices")
+        all_client_invoices = supabase.table("invoices").select("*").eq("company_id", company_id).eq("client_id", client_id).order("issue_date", desc=True).execute().data
+        for inv in all_client_invoices:
             st.write(f"Invoice #{inv['invoice_number']} — {fmt_date(inv['issue_date'])} — €{inv['total_amount']:.2f} — {inv['status']}")
-            if inv["status"] != "Paid":
-                total_owed += float(inv["total_amount"])
+
+        st.markdown("### Credit Notes")
+        all_client_credit_notes = supabase.table("credit_notes").select("*").eq("company_id", company_id).eq("client_id", client_id).order("issue_date", desc=True).execute().data
+        if all_client_credit_notes:
+            for cn in all_client_credit_notes:
+                st.write(f"Credit Note #{cn['credit_note_number']} — {fmt_date(cn['issue_date'])} — -€{cn['total_amount']:.2f} — {cn['reason']}")
+        else:
+            st.caption("No credit notes for this client.")
+
+        unpaid_total = sum(float(inv["total_amount"]) for inv in all_client_invoices if inv["status"] != "Paid")
+        credit_total = sum(float(cn["total_amount"]) for cn in all_client_credit_notes)
+        outstanding_balance = unpaid_total - credit_total
 
         st.divider()
-        st.markdown(f"### Outstanding balance: €{total_owed:.2f}")
+        st.markdown(f"### Outstanding balance: €{outstanding_balance:.2f}")
+
+        st.divider()
+        st.subheader("Download Statement")
+        st.caption("Choose the period the statement should cover. The balance shown is always the current real balance, regardless of the period chosen.")
+        stmt_col1, stmt_col2 = st.columns(2)
+        with stmt_col1:
+            stmt_date_from = st.date_input("From date", value=None, key="stmt_date_from", format="DD/MM/YYYY")
+        with stmt_col2:
+            stmt_date_to = st.date_input("To date", value=None, key="stmt_date_to", format="DD/MM/YYYY")
+
+        period_invoices = [
+            inv for inv in all_client_invoices
+            if (not stmt_date_from or inv["issue_date"] >= str(stmt_date_from))
+            and (not stmt_date_to or inv["issue_date"] <= str(stmt_date_to))
+        ]
+        period_credit_notes = [
+            cn for cn in all_client_credit_notes
+            if (not stmt_date_from or cn["issue_date"] >= str(stmt_date_from))
+            and (not stmt_date_to or cn["issue_date"] <= str(stmt_date_to))
+        ]
+
+        statement_pdf = generate_client_statement_pdf(
+            company, selected_client_record, period_invoices, period_credit_notes,
+            stmt_date_from, stmt_date_to, outstanding_balance
+        )
+        pdf_view_button("📄 Open Statement PDF", statement_pdf)
 
 # ----------------------------------------------------------------
 # TAB: SETTINGS
