@@ -4,10 +4,31 @@ from datetime import date
 import math
 import base64
 import uuid
+import sys
 import streamlit.components.v1 as components
 from pdf_generator import generate_invoice_pdf, generate_quote_pdf
 from reports import build_invoices_csv, build_quotes_csv, generate_invoice_report_pdf, generate_quote_report_pdf
 from streamlit_cookies_controller import CookieController
+
+# Optional: backs up every invoice/quote PDF to two off-site cloud storage
+# providers (Cloudflare R2 and Backblaze B2), in addition to Supabase.
+# Only exists on the droplet (/opt/cycraftware), not on Streamlit Cloud -
+# so this is allowed to fail silently there, and every call to it below
+# is wrapped so a backup failure can never block showing the PDF itself.
+sys.path.insert(0, "/opt/cycraftware")
+try:
+    from archive import archive_invoice
+except ImportError:
+    archive_invoice = None
+
+def _safe_archive(pdf_bytes, doc_type, ref, client_name, issued_on_str):
+    if archive_invoice is None:
+        return
+    try:
+        issued_on = date.fromisoformat(issued_on_str) if issued_on_str else date.today()
+        archive_invoice(pdf_bytes, "skipgo", ref, client_name, issued_on, doc_type=doc_type)
+    except Exception:
+        pass
 
 def calculate_amount_due(start_date_str, end_date_str, base_price, weekly_late_rate, free_days, grace_days=0):
     """
@@ -629,6 +650,7 @@ VAT ({inv['vat_rate']}%): €{inv['vat_amount']:.2f}
             line_items = supabase.table("invoice_line_items").select("*").eq("invoice_id", inv["id"]).execute().data
             rental_info = inv.get("rentals")
             pdf_bytes = generate_invoice_pdf(company, inv, client, line_items, rental_info)
+            _safe_archive(pdf_bytes, "invoices", f"INV-{inv['invoice_number']:04d}", client['name'], inv['issue_date'])
             pdf_view_button("📄 Open PDF", pdf_bytes)
 
             if inv["status"] != "Paid":
@@ -757,6 +779,7 @@ Skip size: {size_label}
             """)
 
             pdf_bytes = generate_quote_pdf(company, q, client, size_label)
+            _safe_archive(pdf_bytes, "quotes", f"QUOTE-{q['quote_number']:04d}", client['name'], q.get('issue_date'))
             pdf_view_button("📄 Open PDF", pdf_bytes)
 
             if q["status"] == "Pending":
